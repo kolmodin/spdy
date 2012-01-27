@@ -21,4 +21,4 @@ executable spdy
     Network.SPDY.Frame,
     Network.SPDY.Utils
 
-  build-depends: base, binary, binary-bits, network, text, bytestring, stm, conduit, zlib-conduit
+  build-depends: base, binary, binary-bits, network, text, bytestring, stm, conduit, zlib-conduit, transformers
