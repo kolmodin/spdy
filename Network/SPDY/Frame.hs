@@ -135,7 +135,7 @@ getControlFrameBody :: ControlFrameHeader -> BitGet Frame
 getControlFrameBody header =
   case controlFrameType header of
     1 -> getSynStream header
-    3 -> error "RST_STREAM.. we're screwed."
+    3 -> getRstStream header
     6 -> getPing
 
 getSynStream :: ControlFrameHeader -> BitGet Frame
@@ -155,24 +155,15 @@ getSynStream header = do
   synStreamFrameNameValueHeaderBlockCompressed <-
     getByteString (fromIntegral (controlFrameLength header) - 10)
   trace ("compressed NVH block " ++ show (B.length synStreamFrameNameValueHeaderBlockCompressed) ++ " bytes") $ do
-  -- let decompressed = decompressWith myParams (L.fromChunks [compressed])
-  -- let fstChunk = head $ L.toChunks decompressed
-  -- trace ("NV = " ++ show (B.length fstChunk) ++ " bytes") $ do
-  -- let nvhBlock = eof $ runGetPartial (runBitGet getNVHBlock) `feed` fstChunk
-  -- case nvhBlock of
-    -- Fail _ _ msg -> fail msg
-    --Partial _ -> fail "partial in nvhblock"
-    -- Done _ _ nvh -> do
   return SynStreamControlFrame { .. }
-  -- where myParams = defaultDecompressParams { decompressDictionary = Just dictionary }
 
 getRstStream :: ControlFrameHeader -> BitGet Frame
 getRstStream header = do
   let controlFrameFlags = controlFrameFlags_ header
   trace "parsing rst_stream" $ do
   _ <- getWord8 1 -- skipped
-  rstStreamFrameStatusCode <- getWord32be 31
-  rstStreamFrameStreamID <- getWord32be 32
+  rstStreamFrameStreamID <- getWord32be 31
+  rstStreamFrameStatusCode <- getWord32be 32
   return RstStreamControlFrame { .. }
 
 getPing :: BitGet Frame
