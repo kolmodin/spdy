@@ -56,7 +56,7 @@ frameHandler state frame = do
   case frame of
     SynStreamControlFrame flags sId assId pri nvh -> do
       liftIO $ print frame
-      createSession state sId pri []
+      createStream state sId pri []
       let syn_reply = SynReplyControlFrame 0 sId S.empty
       -- enqueueFrame state syn_reply
       return state
@@ -76,8 +76,8 @@ enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
     q <- readTVar queue
     writeTVar queue (frame:q)
 
-createSession :: ResourceIO m => SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> ResourceT m ()
-createSession state sId pri nvh = do
+createStream :: ResourceIO m => SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> ResourceT m ()
+createStream state sId pri nvh = do
   liftIO $ putStrLn $ "Creating stream context, id = " ++ show sId
 
 sender :: Socket -> TVar [Frame] -> IO ()
