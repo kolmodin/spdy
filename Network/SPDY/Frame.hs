@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, ForeignFunctionInterface #-}
+{-# LANGUAGE RecordWildCards, ForeignFunctionInterface, OverloadedStrings #-}
 module Network.SPDY.Frame where
 
 import Data.Binary.Get ( runGet, runGetPartial, Result(..), feed, eof )
@@ -18,12 +18,13 @@ import Data.Bits
 import Data.Word
 import Data.Char ( ord )
 
+import Data.ByteString.Char8 () -- IsString instance
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 
 import Control.Applicative ( (<$>) )
 import Control.Exception (assert)
-import Control.Monad ( when, liftM2 )
+import Control.Monad ( when, liftM2, forM_ )
 
 -- import Codec.Compression.Zlib
 
@@ -46,13 +47,11 @@ data Frame
       synStreamFrameStreamID :: Word32,
       synStreamFrameAssociatedStreamID :: Word32,
       synStreamFramePriority :: Word8,
-      synStreamFrameNameValueHeaderBlockCompressed :: B.ByteString }
-      --synStreamFrameNameValueHeaderBlock :: NameValueHeaderBlock
+      synStreamFrameNVHCompressed :: B.ByteString }
   | SynReplyControlFrame {
       controlFrameFlags :: Word8,
       synReplyFrameStreamID :: Word32,
-      synReplyFrameNameValueHeaderBlockCompressed :: B.ByteString }
-      --synReplyFrameNameValueHeaderBlock :: NameValueHeaderBlock
+      synReplyFrameNVHCompressed :: B.ByteString }
   | RstStreamControlFrame {
       controlFrameFlags :: Word8,
       rstStreamFrameStreamID :: Word32,
@@ -101,29 +100,18 @@ getFrame = trace "getFrame" $ do
 
 getControlFrameHeader :: BitGet ControlFrameHeader
 getControlFrameHeader = do
-  trace "entered controlFrame" $ do
   controlFrameVersion <- getWord16be 15
-  trace ("version = " ++ show controlFrameVersion) $ do
   controlFrameType <- getWord16be 16
-  trace ("frame type = " ++ show controlFrameType) $ do
   controlFrameFlags_ <- getWord8 8
-  trace ("frame flags = " ++ show controlFrameFlags_) $ do
   controlFrameLength <- getWord32be 24
-  trace ("frame length = " ++ show controlFrameLength) $ do
-  trace ("control frame header done.") $ do
   return ControlFrameHeader { .. }
 
 getDataFrame :: BitGet Frame
 getDataFrame = do
-  trace "entered dataFrame" $ do
   dataFrameStreamID <- getWord32be 31
-  trace ("streamID = " ++ show dataFrameStreamID) $ do
   dataFrameFlags <- getWord8 8
-  trace ("frameFlags = " ++ show dataFrameFlags) $ do
   len <- fromIntegral <$> getWord32be 24
-  trace ("length = " ++ show len) $ do
   dataFramePayload <- getByteString len
-  trace "dataFrame done!" $ do
   return DataFrame { .. }
 
 getControlFrame :: BitGet Frame
@@ -141,26 +129,19 @@ getControlFrameBody header =
 getSynStream :: ControlFrameHeader -> BitGet Frame
 getSynStream header = do
   let controlFrameFlags = controlFrameFlags_ header
-  trace "parsing syn_stream" $ do
   _ <- getWord8 1
   synStreamFrameStreamID <- getWord32be 31
-  trace ("stream id = " ++ show synStreamFrameStreamID) $ do
   _ <- getWord8 1
   synStreamFrameAssociatedStreamID <- getWord32be 31
-  trace ("associated to stream = " ++ show synStreamFrameAssociatedStreamID) $ do
   synStreamFramePriority <- getWord8 2
-  trace ("priority = " ++ show synStreamFramePriority) $ do
   _ <- getWord16be 14
-  trace "discarded 14 bits" $ do
-  synStreamFrameNameValueHeaderBlockCompressed <-
+  synStreamFrameNVHCompressed <-
     getByteString (fromIntegral (controlFrameLength header) - 10)
-  trace ("compressed NVH block " ++ show (B.length synStreamFrameNameValueHeaderBlockCompressed) ++ " bytes") $ do
   return SynStreamControlFrame { .. }
 
 getRstStream :: ControlFrameHeader -> BitGet Frame
 getRstStream header = do
   let controlFrameFlags = controlFrameFlags_ header
-  trace "parsing rst_stream" $ do
   _ <- getWord8 1 -- skipped
   rstStreamFrameStreamID <- getWord32be 31
   rstStreamFrameStatusCode <- getWord32be 32
@@ -168,14 +149,12 @@ getRstStream header = do
 
 getPing :: BitGet Frame
 getPing = do
-  trace "parsing ping" $ do
   pingControlFrameId <- getWord32be 32
   return PingControlFrame { .. }
 
 getNVHBlock :: BitGet NameValueHeaderBlock
-getNVHBlock = trace "entering getNVHBlock" $ do
+getNVHBlock = do
   blocks <- fromIntegral <$> getWord16be 16
-  trace ("number of NV pairs = " ++ show blocks) $ do
   sequence (replicate blocks getNVHEntry)
 
 getNVHEntry :: BitGet (Text,Text)
@@ -188,6 +167,18 @@ getText16 = do
   return (Text.decodeUtf8 bs)
 
 -- ** Put stuff
+
+putNVHBlock :: NameValueHeaderBlock -> BitPut ()
+putNVHBlock nvh = do
+  putWord16be 16 (fromIntegral $ length nvh)
+  forM_ nvh $ \(k,v) -> do
+    putText16 k
+    putText16 v
+  where
+  putText16 s = do
+    let text = Text.encodeUtf8 s
+    putWord16be 16 (fromIntegral $ B.length text)
+    putByteString text
 
 putFrame :: Frame -> BitPut ()
 putFrame frame = do
@@ -207,7 +198,7 @@ putFrame frame = do
             putWord32be 31 synStreamFrameAssociatedStreamID
             putWord8 2 synStreamFramePriority
             putWord16be 14 0 -- ignored
-            putByteString synStreamFrameNameValueHeaderBlockCompressed
+            putByteString synStreamFrameNVHCompressed
           header = mkControlHeader frame payload
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
@@ -217,7 +208,7 @@ putFrame frame = do
             putBool False -- ignored
             putWord32be 31 synReplyFrameStreamID
             putWord16be 16 0 -- ignored
-            putByteString synReplyFrameNameValueHeaderBlockCompressed
+            putByteString synReplyFrameNVHCompressed
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
@@ -233,6 +224,7 @@ mkControlHeader frame payload = ControlFrameHeader
   , controlFrameType = case frame of
                          SynStreamControlFrame {} -> 1
                          SynReplyControlFrame  {} -> 2
+                         RstStreamControlFrame {} -> 3
                          PingControlFrame      {} -> 6
   , controlFrameFlags_ = case frame of
                            PingControlFrame {} -> 0
@@ -242,7 +234,6 @@ mkControlHeader frame payload = ControlFrameHeader
   where
   payloadLength = fromIntegral (L.length payload)
 
-
 putControlFrameHeader :: ControlFrameHeader -> BitPut ()
 putControlFrameHeader (ControlFrameHeader { .. }) = do
   putBool True
@@ -251,9 +242,8 @@ putControlFrameHeader (ControlFrameHeader { .. }) = do
   putWord8 8 controlFrameFlags_
   putWord32be 24 controlFrameLength
 
-dictionary :: B.ByteString
-dictionary =
-  B.pack . map (fromIntegral . ord) . concat $
+nvhDictionary :: B.ByteString
+nvhDictionary = B.concat $
     [ "optionsgetheadpostputdeletetraceacceptaccept-charsetaccept-encodingaccept-"
     , "languageauthorizationexpectfromhostif-modified-sinceif-matchif-none-matchi"
     , "f-rangeif-unmodifiedsincemax-forwardsproxy-authorizationrangerefererteuser"
