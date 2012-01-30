@@ -31,10 +31,12 @@ prop_roundtrip_frame = roundtrip_bit putFrame getFrame
 
 instance Arbitrary Frame where
   arbitrary = do
-    oneof [ arbitraryDataFrame ]
+    oneof [ arbitraryDataFrame
+          , arbitrarySynStreamFrame
+          ]
 
 instance Arbitrary Text where
-  arbitrary = do str <- genName
+  arbitrary = do str <- genBS 1 10
                  return (decodeUtf8 str)
 
 -- Utilities.
@@ -59,12 +61,30 @@ roundtrip_bit writer reader =
     (runBitPut . writer)
     (runBitGet   reader)
 
+-- Frames.
+
 arbitraryDataFrame :: Gen Frame
 arbitraryDataFrame = do
  sId <- arbitraryWord31be 
  flags <- arbitrary
  payload <- genPayload
  return (DataFrame sId flags payload)
+
+arbitrarySynStreamFrame :: Gen Frame
+arbitrarySynStreamFrame = do
+  flags <- arbitrary
+  sId <- arbitraryWord31be
+  aId <- arbitraryWord31be
+  pri <- arbitraryWord2be
+  nvh <- genBS 4 200
+  return (SynStreamControlFrame flags sId aId pri nvh)
+
+--
+
+arbitraryWord2be :: Gen Word8
+arbitraryWord2be = do
+  v <- choose (0, 2^2 - 1) :: Gen Integer
+  return (fromIntegral v)
 
 arbitraryWord31be :: Gen Word32
 arbitraryWord31be = do
@@ -76,7 +96,7 @@ genPayload = do
   str <- sequence (replicate len $ choose (0,255))
   return (S.pack str)
 
-genName = do
-  len <- choose (1,10)
+genBS from to = do
+  len <- choose (from,to)
   str <- sequence (replicate len $ choose ('a','z'))
   return (S8.pack str)
