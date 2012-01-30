@@ -193,6 +193,7 @@ putFrame :: Frame -> BitPut ()
 putFrame frame = do
   case frame of
     DataFrame { .. } -> do
+      putBool False
       putWord32be 31 dataFrameStreamID
       putWord8 8 dataFrameFlags
       putWord32be 24 (fromIntegral $ B.length dataFramePayload)
