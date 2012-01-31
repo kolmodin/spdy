@@ -75,14 +75,14 @@ arbitrarySynStreamFrame = do
   flags <- arbitrary
   sId <- arbitraryWord31be
   aId <- arbitraryWord31be
-  pri <- arbitraryWord2be
+  pri <- arbitraryPriority
   nvh <- genBS 4 200
   return (SynStreamControlFrame flags sId aId pri nvh)
 
 --
 
-arbitraryWord2be :: Gen Word8
-arbitraryWord2be = do
+arbitraryPriority :: Gen Word8
+arbitraryPriority = do
   v <- choose (0, 2^2 - 1) :: Gen Integer
   return (fromIntegral v)
 
