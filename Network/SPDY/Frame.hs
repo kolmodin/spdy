@@ -123,6 +123,7 @@ getControlFrameBody :: ControlFrameHeader -> BitGet Frame
 getControlFrameBody header =
   case controlFrameType header of
     1 -> getSynStream header
+    2 -> getSynReplyStream header
     3 -> getRstStream header
     6 -> getPing
 
@@ -138,6 +139,16 @@ getSynStream header = do
   synStreamFrameNVHCompressed <-
     getByteString (fromIntegral (controlFrameLength header) - 10)
   return SynStreamControlFrame { .. }
+
+getSynReplyStream :: ControlFrameHeader -> BitGet Frame
+getSynReplyStream header = do
+  let controlFrameFlags = controlFrameFlags_ header
+  _ <- getWord8 1 -- unused
+  synReplyFrameStreamID <- getWord32be 31
+  _ <- getWord16be 16 -- unused
+  synReplyFrameNVHCompressed <-
+    getByteString (fromIntegral (controlFrameLength header) - 6)
+  return SynReplyControlFrame { .. }
 
 getRstStream :: ControlFrameHeader -> BitGet Frame
 getRstStream header = do

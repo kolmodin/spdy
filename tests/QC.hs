@@ -33,6 +33,7 @@ instance Arbitrary Frame where
   arbitrary = do
     oneof [ arbitraryDataFrame
           , arbitrarySynStreamFrame
+          , arbitrarySynReplyStreamFrame
           ]
 
 instance Arbitrary Text where
@@ -76,8 +77,15 @@ arbitrarySynStreamFrame = do
   sId <- arbitraryWord31be
   aId <- arbitraryWord31be
   pri <- arbitraryPriority
-  nvh <- genBS 4 200
+  nvh <- genBS 2 200
   return (SynStreamControlFrame flags sId aId pri nvh)
+
+arbitrarySynReplyStreamFrame :: Gen Frame
+arbitrarySynReplyStreamFrame = do
+  flags <- arbitrary
+  sId <- arbitraryWord31be
+  nvh <- genBS 2 200
+  return (SynReplyControlFrame flags sId nvh)
 
 --
 
