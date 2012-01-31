@@ -34,6 +34,7 @@ instance Arbitrary Frame where
     oneof [ arbitraryDataFrame
           , arbitrarySynStreamFrame
           , arbitrarySynReplyStreamFrame
+          , arbitraryRstStreamFrame
           ]
 
 instance Arbitrary Text where
@@ -86,6 +87,13 @@ arbitrarySynReplyStreamFrame = do
   sId <- arbitraryWord31be
   nvh <- genBS 2 200
   return (SynReplyControlFrame flags sId nvh)
+
+arbitraryRstStreamFrame :: Gen Frame
+arbitraryRstStreamFrame = do
+  flags <- arbitrary
+  sId <- arbitraryWord31be
+  status <- arbitrary
+  return (RstStreamControlFrame flags sId status)
 
 --
 

@@ -223,14 +223,20 @@ putFrame frame = do
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
+    RstStreamControlFrame { .. } -> do
+      putControlFrameHeader (mkControlHeaderWithLength frame 8)
+      putBool False -- ignored
+      putWord32be 31 rstStreamFrameStreamID
+      putWord32be 32 rstStreamFrameStatusCode
+
     PingControlFrame { .. } -> do
       let payload = runPut $ runBitPut $ do
             putWord32be 32 pingControlFrameId
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
-mkControlHeader :: Frame -> L.ByteString -> ControlFrameHeader
-mkControlHeader frame payload = ControlFrameHeader
+mkControlHeaderWithLength :: Frame -> Word32 -> ControlFrameHeader
+mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
   { controlFrameVersion = ourSPDYVersion
   , controlFrameType = case frame of
                          SynStreamControlFrame {} -> 1
@@ -242,8 +248,12 @@ mkControlHeader frame payload = ControlFrameHeader
                            _                   -> controlFrameFlags frame
   , controlFrameLength = payloadLength
   }
-  where
-  payloadLength = fromIntegral (L.length payload)
+
+mkControlHeader :: Frame -> L.ByteString -> ControlFrameHeader
+mkControlHeader frame payload =
+  mkControlHeaderWithLength
+    frame
+    (fromIntegral (L.length payload))
 
 putControlFrameHeader :: ControlFrameHeader -> BitPut ()
 putControlFrameHeader (ControlFrameHeader { .. }) = do
