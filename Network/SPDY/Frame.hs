@@ -92,7 +92,7 @@ type NameValueHeaderBlock = [(Text,Text)]
 -- ** Get stuff
 
 getFrame :: BitGet Frame
-getFrame = trace "getFrame" $ do
+getFrame = do
   c <- getWord8 1
   case c of
     0 -> getDataFrame

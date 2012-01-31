@@ -167,9 +167,7 @@ sessionHandler handler conn sockaddr = do
   liftIO $ forkIO $ sender handle (sessionStateSendQueue init)
   go handle init (runGetPartial (runBitGet getFrame))
   where
-  go handle s r = do
-    closed <- liftIO $ hIsClosed handle
-    liftIO $ print closed
+  go handle s r =
     case r of
       Fail _ _ msg -> error msg
       Partial f -> do
@@ -177,7 +175,7 @@ sessionHandler handler conn sockaddr = do
                            S.hGetSome handle (4 * 1024)
         liftIO $ putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, socket " ++ show conn)
         go handle s (f $ Just raw)
-      Done rest pos frame -> do
+      Done rest _pos frame -> do
         liftIO $ putStrLn "Parsed frame."
         s' <- handler s frame
         go handle s' (runGetPartial (runBitGet getFrame) `feed` rest)
