@@ -22,3 +22,4 @@ executable spdy
     Network.SPDY.Utils
 
   build-depends: base, binary, binary-bits, network, text, bytestring, stm, conduit, zlib-bindings, transformers
+  ghc-options: -threaded

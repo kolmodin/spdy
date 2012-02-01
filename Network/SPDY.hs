@@ -138,8 +138,8 @@ popper io = go id
 clientHandler :: Chan S.ByteString -> NameValueHeaderBlock -> IO ()
 clientHandler chan nvh = return ()
 
-sender :: Handle -> TVar [IO Frame] -> IO ()
-sender handle queue = go
+sender :: Socket -> TVar [IO Frame] -> IO ()
+sender socket queue = go
   where
   go = do
     (frameIO,len) <- getNextFrame
@@ -147,8 +147,9 @@ sender handle queue = go
     frame <- frameIO
     print frame
     putStrLn (show len ++ " more items in queue")
-    L.hPut handle (runPut (runBitPut (putFrame frame)))
-    hFlush handle
+    NL.sendAll socket (runPut (runBitPut (putFrame frame)))
+    -- L.hPut handle (runPut (runBitPut (putFrame frame)))
+    -- hFlush handle
     go
   getNextFrame =
     atomically $ do
@@ -163,19 +164,18 @@ sender handle queue = go
 sessionHandler :: ResourceIO m => FrameHandler m -> Socket -> SockAddr -> ResourceT m ()
 sessionHandler handler conn sockaddr = do
   init <- liftIO $ initSession
-  handle <- liftIO $ socketToHandle conn ReadWriteMode
-  liftIO $ forkIO $ sender handle (sessionStateSendQueue init)
-  go handle init (runGetPartial (runBitGet getFrame))
+  -- handle <- liftIO $ socketToHandle conn ReadWriteMode
+  liftIO $ forkIO $ sender conn (sessionStateSendQueue init)
+  go init (runGetPartial (runBitGet getFrame))
   where
-  go handle s r =
+  go s r =
     case r of
       Fail _ _ msg -> error msg
       Partial f -> do
-        raw <- liftIO $ do hWaitForInput handle (-1)
-                           S.hGetSome handle (4 * 1024)
+        raw <- liftIO $ NS.recv conn (4 * 1024)
         liftIO $ putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, socket " ++ show conn)
-        go handle s (f $ Just raw)
+        go s (f $ Just raw)
       Done rest _pos frame -> do
         liftIO $ putStrLn "Parsed frame."
         s' <- handler s frame
-        go handle s' (runGetPartial (runBitGet getFrame) `feed` rest)
+        go s' (runGetPartial (runBitGet getFrame) `feed` rest)
