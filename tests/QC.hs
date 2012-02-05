@@ -1,4 +1,4 @@
-module Main where
+module Main ( main ) where
 
 import Data.Text.Encoding ( decodeUtf8, encodeUtf8 )
 
@@ -6,6 +6,9 @@ import Data.Text ( Text )
 
 import Network.SPDY.Frame
 
+import Test.Framework
+import Test.Framework.Runners.Console
+import Test.Framework.Providers.QuickCheck2
 import Test.QuickCheck hiding ( Result )
 
 import qualified Data.ByteString as S
@@ -18,6 +21,23 @@ import Data.Binary.Bits.Get
 import Data.Binary.Bits.Put
 
 import Data.Word
+
+main :: IO ()
+main = defaultMain allTests
+
+allTests :: [Test]
+allTests =
+  [ testGroup "Wire"
+      [ testProperty "Name Value Header Block" prop_roundtrip_nvh
+      , testGroup "Frame"
+          [ testProperty "Data Frame"       (arbitraryDataFrame           >>= prop_roundtrip_frame)
+          , testProperty "Syn Stream Frame" (arbitrarySynStreamFrame      >>= prop_roundtrip_frame)
+          , testProperty "Syn Reply Frame"  (arbitrarySynReplyStreamFrame >>= prop_roundtrip_frame)
+          , testProperty "Rst Stream Frame" (arbitraryRstStreamFrame      >>= prop_roundtrip_frame)
+          ]
+      ]
+  ]
+
 
 -- Properties.
 
