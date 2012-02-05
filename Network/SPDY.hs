@@ -73,7 +73,6 @@ readPrivateKey filepath = do
         Right (_pub, x)  -> return $ TLS.PrivRSA x
 
 
-
 server :: (TLSCtx Handle -> SockAddr -> ResourceT IO ()) -> String -> IO ()
 server handler port = withSocketsDo $ do
   addrinfos <- getAddrInfo
@@ -113,8 +112,8 @@ data SessionState = SessionState
   , sessionStateStreamStates :: [StreamState]
   , sessionStateNVHReceiveZContext :: Inflate
   , sessionStateNVHSendZContext :: Deflate
-  , sessionStateLastSentID :: Word32
-  , sessionStateLastRecievedID :: Word32
+  , sessionStateNextValidSendID :: Word32
+  , sessionStateNextValidReceiveID :: Word32
   }
 
 data StreamState = StreamState
@@ -128,7 +127,7 @@ initSession = do
   queue <- newTVarIO []
   zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
-  return $ SessionState queue [] zInflate zDeflate (-1) 0
+  return $ SessionState queue [] zInflate zDeflate 1 2
 
 frameHandler :: ResourceIO m => FrameHandler m
 frameHandler state frame = do
@@ -160,7 +159,7 @@ createStream state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) 
   let streamState = StreamState sId pri
       Done _ _ nvh = eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks
   liftIO $ print (sId, pri, nvh)
-  liftIO $ do forkIO $ clientHandler state sId pri nvh
+  liftIO $ do forkIO $ onSynStreamFrame state sId pri nvh
   return state { sessionStateStreamStates = streamState : sessionStateStreamStates state }
   where
   feedAll r [] = r
@@ -174,8 +173,8 @@ popper io = go id
       Nothing -> return (front [])
       Just x -> go (front . (:) x)
 
-clientHandler :: SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ()
-clientHandler state sId pri nvh = do
+onSynStreamFrame :: SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ()
+onSynStreamFrame state sId pri nvh = do
   enqueueFrame state $ do
     let nvh' = List.sort $ map utf8 [ ("status","200 OK"),("version", "HTTP/1.1"), ("content-type", "text/html; charset=UTF-8"),("date", "Mon, 23 May 2005 22:38:34 GMT"),("server", "Apache/1.3.3.7 (Unix) (Red-Hat/Linux)")]
         nvhChunks = runPut (runBitPut (putNVHBlock nvh'))
