@@ -11,9 +11,8 @@ See [the SPDY tool page](http://dev.chromium.org/spdy/spdy-tools-and-debugging)
 for debugging tools.
 
 So far no support for NPN (Next Protocol Negotiation) in the tls package,
-which means we cannot use alternate-protocol npn-spdy/2.
-For some reason I haven't managed to get alternate-protocol spdy/2 to work
-in Chrome, looks like it's not supported at the moment.
+which means we cannot use alternate-protocol "npn-spdy/2".
+Neither Chrome nor Firefox supports alternate-protocol "spdy/2".
 This limits the use of this library, as we need to force ssl in Chrome for
 all pages, which means it breaks pretty much the rest of the web.
 
