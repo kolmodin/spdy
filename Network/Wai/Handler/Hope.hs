@@ -98,11 +98,12 @@ run port app = withSocketsDo $ do
 
   let loop = do
         (conn, sockaddr) <- accept sock
-        handle <- socketToHandle conn ReadWriteMode
-        cryptoR <- newGenIO :: IO SystemRandom
-        tlsctx <- TLS.server (myParams cert pk) cryptoR handle
-        TLS.handshake tlsctx
-        forkIO $ runResourceT $ (sessionHandler (frameHandler app sockaddr)) tlsctx sockaddr
+        forkIO $ runResourceT $ do
+          handle <- liftIO $ socketToHandle conn ReadWriteMode
+          cryptoR <- liftIO (newGenIO :: IO SystemRandom)
+          tlsctx <- liftIO $ TLS.server (myParams cert pk) cryptoR handle
+          liftIO $ TLS.handshake tlsctx
+          (sessionHandler (frameHandler app sockaddr)) tlsctx sockaddr
         loop
   loop
 
@@ -112,6 +113,11 @@ run port app = withSocketsDo $ do
       { TLS.pAllowedVersions = TLS.SSL3 : TLS.pAllowedVersions TLS.defaultParams
       , TLS.pCiphers = TLSE.ciphersuite_all
       , TLS.pCertificates    = [(cert, Just pk)]
+      , TLS.pNextProtocols = Just [ "spdy/2" ]
+      , TLS.pLogging = TLS.defaultLogging
+          -- { TLS.loggingPacketSent = \p -> putStrLn "sent:" >> putStrLn p
+          -- , TLS.loggingPacketRecv = \p -> putStrLn "recv:" >> putStrLn p
+          -- }
       }
 
 type FrameHandler m = SessionState -> Frame -> ResourceT m SessionState
@@ -268,8 +274,8 @@ sessionHandler handler tlsctx sockaddr = do
       Fail _ _ msg -> error msg
       Partial f -> do
         raw <- TLS.recvData tlsctx
-        liftIO $ putStrLn ("Got " ++ show (L.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
-        go s (f $ Just (S.concat $ L.toChunks raw))
+        liftIO $ putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
+        go s (f $ Just raw)
       Done rest _pos frame -> do
         liftIO $ putStrLn "Parsed frame."
         s' <- handler s frame

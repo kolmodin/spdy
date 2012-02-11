@@ -220,8 +220,8 @@ sessionHandler handler tlsctx sockaddr = do
       Fail _ _ msg -> error msg
       Partial f -> do
         raw <- TLS.recvData tlsctx
-        liftIO $ putStrLn ("Got " ++ show (L.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
-        go s (f $ Just (S.concat $ L.toChunks raw))
+        liftIO $ putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
+        go s (f $ Just raw)
       Done rest _pos frame -> do
         liftIO $ putStrLn "Parsed frame."
         s' <- handler s frame

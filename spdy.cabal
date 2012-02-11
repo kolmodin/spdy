@@ -33,7 +33,7 @@ executable app
     Network.SPDY.Utils
 
   build-depends: base, binary >= 0.5.2.0, binary-bits, network, text,
-                 bytestring, stm, conduit, zlib-bindings, transformers, tls, tls-extra,
+                 bytestring, stm, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
                  crypto-api, certificate, wai, http-types, vault,
                  blaze-builder, case-insensitive,
                  wai-app-static, warp
