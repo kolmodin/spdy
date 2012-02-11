@@ -113,7 +113,7 @@ run port app = withSocketsDo $ do
       { TLS.pAllowedVersions = TLS.SSL3 : TLS.pAllowedVersions TLS.defaultParams
       , TLS.pCiphers = TLSE.ciphersuite_all
       , TLS.pCertificates    = [(cert, Just pk)]
-      , TLS.pNextProtocols = Just [ "spdy/2" ]
+      , TLS.onSuggestNextProtocols = return $ Just [ "spdy/2" ]
       , TLS.pLogging = TLS.defaultLogging
           -- { TLS.loggingPacketSent = \p -> putStrLn "sent:" >> putStrLn p
           -- , TLS.loggingPacketRecv = \p -> putStrLn "recv:" >> putStrLn p
@@ -215,9 +215,11 @@ onSynStreamFrame app sockaddr state sId pri nvh = do
   enqueueFrameSink =
     sinkState
       ()
-      (\_ inpBuilder -> do
-        liftIO $ enqueueFrame state $ return $ mkDataFrame (toByteString inpBuilder)
-        return ((), Processing))
+      (\_ input -> do
+        case input of
+          (Chunk inpBuilder) -> liftIO $ enqueueFrame state $ return $ mkDataFrame (toByteString inpBuilder)
+          Flush -> return ()
+        return (StateProcessing ()))
       (\_ -> liftIO $ enqueueFrame state $ return $ DataFrame sId 1 "")
 
 buildReq sockaddr nvh = do
@@ -238,7 +240,7 @@ buildReq sockaddr nvh = do
                      Nothing -> error "url missing from NVH"
 
    , queryString = mempty
-   , requestBody = sourceState () (\_ -> return ((), Closed))
+   , requestBody = sourceState () (\_ -> return StateClosed)
    , vault = V.empty
    }
 
