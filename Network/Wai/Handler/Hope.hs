@@ -3,7 +3,8 @@ module Network.Wai.Handler.Hope where
 
 import Network.Wai
 import qualified Data.Vault as V
-import Network.HTTP.Types
+import Network.HTTP.Types ( Status(..), HttpVersion(..) )
+import qualified Network.HTTP.Types as H
 
 import Blaze.ByteString.Builder ( toByteString )
 
@@ -28,6 +29,7 @@ import Network.Socket hiding ( recv, Closed )
 import qualified Network.Socket.ByteString as NS
 import qualified Network.Socket.ByteString.Lazy as NL
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Chan
 import Control.Concurrent.STM.TVar
@@ -38,20 +40,22 @@ import qualified Data.ByteString as S
 import Codec.Zlib
 import Data.Text ( Text )
 import Data.Text.Encoding ( encodeUtf8, decodeUtf8 )
-import qualified Data.Text as T ( splitOn )
+import qualified Data.Text as T
+import qualified Data.Text.Read as T
 
 import Data.Monoid
 import qualified Data.List as List
 import System.IO ( IOMode(ReadWriteMode), hWaitForInput, Handle, hIsClosed, hFlush )
 
-import Data.CaseInsensitive ( foldedCase )
+import qualified Data.CaseInsensitive as CA ( foldedCase, mk )
 
 import Network.TLS ( TLSCtx )
 import qualified Network.TLS as TLS
 import qualified Network.TLS.Extra as TLSE
 import Crypto.Random ( newGenIO, SystemRandom )
 
-
+import qualified Data.Attoparsec as A
+import qualified Data.Attoparsec.Char8 as A
 
 import qualified Data.Certificate.X509 as X509
 import qualified Data.Certificate.PEM as PEM
@@ -190,14 +194,14 @@ popper io = go id
 
 onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ()
 onSynStreamFrame app sockaddr state sId pri nvh = do
-  req <- buildReq sockaddr nvh
+  req <- buildReq sockaddr nvh -- catch errors, return protocol_error on stream
   runResourceT $ do
     resp <- app req
     let (status, responseHeaders, source) = responseSource resp
         headerStatus = ("status", showStatus status)
         headerVersion = ("version", "HTTP/1.1")
         headerServer = ("server", "Hope/0.0.0.0")
-        appHeaders = [ (foldedCase h, k) | (h,k) <- responseHeaders ]
+        appHeaders = [ (CA.foldedCase h, k) | (h,k) <- responseHeaders ]
     liftIO $ enqueueFrame state $ do
       let nvh' = List.sort $ map utf8 $ [headerStatus, headerVersion, headerServer] ++ appHeaders
           nvhChunks = runPut (runBitPut (putNVHBlock nvh'))
@@ -222,27 +226,57 @@ onSynStreamFrame app sockaddr state sId pri nvh = do
         return (StateProcessing ()))
       (\_ -> liftIO $ enqueueFrame state $ return $ DataFrame sId 1 "")
 
+-- Throws errors on failures.
+buildReq :: SockAddr -> NameValueHeaderBlock -> IO Request
 buildReq sockaddr nvh = do
- return Request
-   { requestMethod = methodGet -- todo
-   , httpVersion = http11 -- todo
-   , rawPathInfo = case lookup (decodeUtf8 "url") nvh of
-                     Just str -> encodeUtf8 str
-                     Nothing -> error "url missing from NVH"
-   , rawQueryString = "?hl=en"
-   , serverName = "ikra"
-   , serverPort = 8080
-   , requestHeaders = []
-   , isSecure = True
-   , remoteHost = sockaddr
-   , pathInfo = case lookup (decodeUtf8 "url") nvh of
-                     Just str -> drop 1 (T.splitOn "/" str)
-                     Nothing -> error "url missing from NVH"
+  method <- case lookup (decodeUtf8 "method") nvh of
+              Just m -> return m
+              Nothing -> fail "no method in NVH block"
+  version <- case parseVersion <$> encodeUtf8 <$> lookup (decodeUtf8 "version") nvh of
+               Just (Right v) -> return v
+               Just (Left err) -> fail "could not parse http version in nvh block"
+               Nothing -> fail "no http version in nvh block"
 
-   , queryString = mempty
-   , requestBody = sourceState () (\_ -> return StateClosed)
-   , vault = V.empty
-   }
+  (host,port') <-
+    case T.split (==':') <$> lookup (decodeUtf8 "host") nvh of
+      Just [host,port] -> return (encodeUtf8 host, T.decimal port)
+      Nothing -> fail "no host in nvh block"
+
+  port <- case port' of
+            Right (p,"") -> return p
+            Left str -> fail "invalid port in nvh field 'host'"
+ 
+  rawPath <- case lookup (decodeUtf8 "url") nvh of
+               Just str -> return str
+               Nothing -> fail "url parameter missing in nvh block"
+
+  (path,query) <-
+    case T.break (=='?') rawPath of
+      ("", q) -> return ("/", q)
+      (p,q) -> return (p,q)
+
+  return Request
+    { requestMethod = encodeUtf8 method
+    , httpVersion = version
+    , pathInfo = drop 1 (T.splitOn "/" path)
+    , rawPathInfo = encodeUtf8 path
+    , rawQueryString = encodeUtf8 query
+    , serverName = host
+    , serverPort = port
+    , requestHeaders = [ (CA.mk (encodeUtf8 h), encodeUtf8 v) | (h,v) <- nvh ]
+    , isSecure = True
+    , remoteHost = sockaddr
+    , queryString = H.parseQuery (encodeUtf8 query)
+    , requestBody = sourceState () (\_ -> return StateClosed)
+    , vault = V.empty
+    }
+ where
+ parseVersion = A.parseOnly (do A.string "HTTP/"
+                                x <- A.decimal
+                                A.char '.'
+                                y <- A.decimal
+                                A.endOfInput
+                                return $ HttpVersion x y)
 
 sender :: TLSCtx a -> TVar [IO Frame] -> IO ()
 sender tlsctx queue = go
