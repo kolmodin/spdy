@@ -10,13 +10,8 @@ language.
 See [the SPDY tool page](http://dev.chromium.org/spdy/spdy-tools-and-debugging)
 for debugging tools.
 
-So far no support for NPN (Next Protocol Negotiation) in the tls package,
-which means we cannot use alternate-protocol "npn-spdy/2".
-Neither Chrome nor Firefox supports alternate-protocol "spdy/2".
-This limits the use of this library, as we need to force ssl in Chrome for
-all pages, which means it breaks pretty much the rest of the web.
-
-This is why it's useful to keep your current Chrome instance, while forcing
-ssl in another instance where you develop. Here's how I do it;
-
-> google-chrome --use-spdy=ssl --user-data-dir=/tmp/spdy-chrome
+SPDY requires TLS to have support for NPN (Next Protocol Negotiation).
+There is ongoing work in adding NPN to the Haskell TLS package, you'll need
+it to compile this package.
+See [my tls branch npn](https://github.com/kolmodin/hs-tls/tree/npn).
+Documentation of [npn here](http://technotes.googlecode.com/git/nextprotoneg.html).
