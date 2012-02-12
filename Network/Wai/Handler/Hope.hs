@@ -105,9 +105,13 @@ run port app = withSocketsDo $ do
         forkIO $ runResourceT $ do
           handle <- liftIO $ socketToHandle conn ReadWriteMode
           cryptoR <- liftIO (newGenIO :: IO SystemRandom)
-          tlsctx <- liftIO $ TLS.server (myParams cert pk) cryptoR handle
-          liftIO $ TLS.handshake tlsctx
-          (sessionHandler (frameHandler app sockaddr)) tlsctx sockaddr
+          tlsctx <- TLS.server (myParams cert pk) cryptoR handle
+          TLS.handshake tlsctx
+          proto <- TLS.getNegotiatedProtocol tlsctx
+          case proto of
+            Just "spdy/2" -> (sessionHandler (frameHandler app sockaddr)) tlsctx sockaddr
+            Just p -> liftIO $ putStrLn ("client suggested to not use spdy/2: " ++ show p)
+            Nothing -> liftIO $ putStrLn "can't happen with chrome, client didn't use NPN"
         loop
   loop
 
