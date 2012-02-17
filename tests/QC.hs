@@ -34,6 +34,7 @@ allTests =
           , testProperty "Syn Stream Frame" (arbitrarySynStreamFrame      >>= prop_roundtrip_frame)
           , testProperty "Syn Reply Frame"  (arbitrarySynReplyStreamFrame >>= prop_roundtrip_frame)
           , testProperty "Rst Stream Frame" (arbitraryRstStreamFrame      >>= prop_roundtrip_frame)
+          , testProperty "Settings Frame"   (arbitrarySettingsFrame       >>= prop_roundtrip_frame)
           ]
       ]
   ]
@@ -115,7 +116,20 @@ arbitraryRstStreamFrame = do
   status <- arbitrary
   return (RstStreamControlFrame flags sId status)
 
+arbitrarySettingsFrame :: Gen Frame
+arbitrarySettingsFrame = do
+  flags <- arbitrary
+  values <- listOf arbitrarySettingValue
+  return (SettingsFrame flags values)
+
 --
+
+arbitrarySettingValue :: Gen (Word32, Word8, Word32)
+arbitrarySettingValue = do
+  id_ <- choose (0,2^24-1)
+  flag <- arbitrary
+  value <- arbitrary
+  return (id_, flag, value)
 
 arbitraryPriority :: Gen Word8
 arbitraryPriority = do

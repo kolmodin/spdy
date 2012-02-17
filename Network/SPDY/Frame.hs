@@ -62,6 +62,9 @@ data Frame
       finStreamFrameStatus :: Word32 }
   | PingControlFrame {
       pingControlFrameId :: Word32 }
+  | SettingsFrame {
+      controlFrameFlags :: Word8,
+      settingsFrameValues :: [(Word32, Word8, Word32)] }
   | NoopControlFrame
   deriving (Show, Eq)
 
@@ -125,6 +128,7 @@ getControlFrameBody header =
     1 -> getSynStream header
     2 -> getSynReplyStream header
     3 -> getRstStream header
+    4 -> getSettingsFrame header
     6 -> getPing
 
 getSynStream :: ControlFrameHeader -> BitGet Frame
@@ -162,6 +166,20 @@ getPing :: BitGet Frame
 getPing = do
   pingControlFrameId <- getWord32be 32
   return PingControlFrame { .. }
+
+getSettingsFrame :: ControlFrameHeader -> BitGet Frame
+getSettingsFrame header = do
+  let controlFrameFlags = controlFrameFlags_ header
+  entries <- getWord32be 32
+  settingsFrameValues <- sequence $ replicate (fromIntegral entries) getSettingEntry
+  return $ SettingsFrame { .. }
+  
+getSettingEntry :: BitGet (Word32, Word8, Word32)
+getSettingEntry = do
+  id_ <- getWord32be 24
+  flags <- getWord8 8
+  value <- getWord32be 32
+  return (id_, flags, value)
 
 getNVHBlock :: BitGet NameValueHeaderBlock
 getNVHBlock = do
@@ -235,6 +253,17 @@ putFrame frame = do
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
+    SettingsFrame { .. } -> do
+      let payload = runPut $ runBitPut $ do
+            mapM_ putValue settingsFrameValues
+          putValue (id_, flags, value) = do
+            putWord32be 24 id_
+            putWord8 8 flags
+            putWord32be 32 value
+      putControlFrameHeader (mkControlHeader frame payload)
+      putWord32be 32 (fromIntegral $ length settingsFrameValues)
+      mapM_ putByteString (L.toChunks payload)
+
 mkControlHeaderWithLength :: Frame -> Word32 -> ControlFrameHeader
 mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
   { controlFrameVersion = ourSPDYVersion
@@ -242,6 +271,7 @@ mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
                          SynStreamControlFrame {} -> 1
                          SynReplyControlFrame  {} -> 2
                          RstStreamControlFrame {} -> 3
+                         SettingsFrame         {} -> 4
                          PingControlFrame      {} -> 6
   , controlFrameFlags_ = case frame of
                            PingControlFrame {} -> 0
