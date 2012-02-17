@@ -1,36 +1,22 @@
 {-# LANGUAGE RecordWildCards, ForeignFunctionInterface, OverloadedStrings #-}
 module Network.SPDY.Frame where
 
-import Data.Binary.Get ( runGet, runGetPartial, Result(..), feed, eof )
 import Data.Binary.Put ( runPut )
-
-import qualified Data.Binary.Get as Get
-import qualified Data.Binary.Put as Put
 
 import Data.Text ( Text )
 import qualified Data.Text.Encoding as Text
 
-import Data.Binary.Bits
 import Data.Binary.Bits.Get
 import Data.Binary.Bits.Put
 
-import Data.Bits
 import Data.Word
-import Data.Char ( ord )
 
 import Data.ByteString.Char8 () -- IsString instance
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
 
 import Control.Applicative ( (<$>) )
-import Control.Exception (assert)
-import Control.Monad ( when, liftM2, forM_ )
-
--- import Codec.Compression.Zlib
-
--- import Network.SPDY.Utils
-
-import Debug.Trace
+import Control.Monad ( liftM2, forM_ )
 
 type StreamID = Word32
 
@@ -100,6 +86,7 @@ getFrame = do
   case c of
     0 -> getDataFrame
     1 -> getControlFrame
+    _ -> error "impossible"
 
 getControlFrameHeader :: BitGet ControlFrameHeader
 getControlFrameHeader = do
@@ -130,6 +117,7 @@ getControlFrameBody header =
     3 -> getRstStream header
     4 -> getSettingsFrame header
     6 -> getPing
+    _ -> error "not yet implemented control frame type"
 
 getSynStream :: ControlFrameHeader -> BitGet Frame
 getSynStream header = do
@@ -228,7 +216,6 @@ putFrame frame = do
             putWord8 2 synStreamFramePriority
             putWord16be 14 0 -- ignored
             putByteString synStreamFrameNVHCompressed
-          header = mkControlHeader frame payload
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
@@ -268,6 +255,7 @@ mkControlHeaderWithLength :: Frame -> Word32 -> ControlFrameHeader
 mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
   { controlFrameVersion = ourSPDYVersion
   , controlFrameType = case frame of
+                         DataFrame             {} -> error "impossible"
                          SynStreamControlFrame {} -> 1
                          SynReplyControlFrame  {} -> 2
                          RstStreamControlFrame {} -> 3

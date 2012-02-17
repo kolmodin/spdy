@@ -12,7 +12,6 @@ import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 
-import Data.Binary.Bits
 import Data.Binary.Bits.Get
 import Data.Binary.Bits.Put
 
@@ -26,26 +25,19 @@ import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 
 import Network.Socket hiding ( recv, Closed )
-import qualified Network.Socket.ByteString as NS
-import qualified Network.Socket.ByteString.Lazy as NL
 
 import Control.Applicative
 import Control.Concurrent
-import Control.Concurrent.Chan
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
 
-import qualified Data.ByteString as S
-
 import Codec.Zlib
-import Data.Text ( Text )
 import Data.Text.Encoding ( encodeUtf8, decodeUtf8 )
 import qualified Data.Text as T
 import qualified Data.Text.Read as T
 
-import Data.Monoid
 import qualified Data.List as List
-import System.IO ( IOMode(ReadWriteMode), hWaitForInput, Handle, hIsClosed, hFlush )
+import System.IO ( IOMode(ReadWriteMode), Handle )
 
 import qualified Data.CaseInsensitive as CA ( foldedCase, mk )
 
@@ -102,7 +94,7 @@ run port app = withSocketsDo $ do
 
   let loop = do
         (conn, sockaddr) <- accept sock
-        forkIO $ runResourceT $ do
+        _ <- forkIO $ runResourceT $ do
           handle <- liftIO $ socketToHandle conn ReadWriteMode
           cryptoR <- liftIO (newGenIO :: IO SystemRandom)
           tlsctx <- TLS.server (myParams cert pk) cryptoR handle
@@ -157,8 +149,8 @@ frameHandler app sockaddr state frame = do
   liftIO $ print frame
   case frame of
     SynStreamControlFrame flags sId assId pri nvh -> do
-      createStream app sockaddr state sId pri nvh
-      return state
+      state' <- createStream app sockaddr state sId pri nvh
+      return state'
     RstStreamControlFrame flags sId status -> do
       liftIO $ putStrLn "RstStream... we're screwed."
       -- TODO: remove all knowledge of this stream. empty send buffer.
@@ -215,7 +207,7 @@ onSynStreamFrame app sockaddr state sId pri nvh = do
       fl <- flushDeflate (sessionStateNVHSendZContext state) popper
       let nvhReply = S.concat (str ++ fl)
       putStrLn "Constructed frame:"
-      print ("syn_reply", sId, nvh')
+      print ("syn_reply" :: String, sId, nvh')
       return (SynReplyControlFrame 0 sId nvhReply) :: IO Frame
     source $$ enqueueFrameSink
   where
@@ -246,11 +238,11 @@ buildReq sockaddr nvh = do
   (host,port') <-
     case T.split (==':') <$> lookup (decodeUtf8 "host") nvh of
       Just [host,port] -> return (encodeUtf8 host, T.decimal port)
-      Nothing -> fail "no host in nvh block"
+      _                -> fail "no or invalid host in nvh block"
 
   port <- case port' of
             Right (p,"") -> return p
-            Left str -> fail "invalid port in nvh field 'host'"
+            _            -> fail "invalid port in nvh field 'host'"
  
   rawPath <- case lookup (decodeUtf8 "url") nvh of
                Just str -> return str
@@ -277,9 +269,9 @@ buildReq sockaddr nvh = do
     , vault = V.empty
     }
  where
- parseVersion = A.parseOnly (do A.string "HTTP/"
+ parseVersion = A.parseOnly (do _ <- A.string "HTTP/"
                                 x <- A.decimal
-                                A.char '.'
+                                _ <- A.char '.'
                                 y <- A.decimal
                                 A.endOfInput
                                 return $ HttpVersion x y)
@@ -307,9 +299,9 @@ sender tlsctx queue = go
 
 sessionHandler :: ResourceIO m => FrameHandler m -> TLSCtx Handle -> SockAddr -> ResourceT m ()
 sessionHandler handler tlsctx sockaddr = do
-  init <- liftIO $ initSession
-  liftIO $ forkIO $ sender tlsctx (sessionStateSendQueue init)
-  go init (runGetPartial (runBitGet getFrame))
+  initS <- liftIO $ initSession
+  liftIO $ forkIO $ sender tlsctx (sessionStateSendQueue initS)
+  go initS (runGetPartial (runBitGet getFrame))
   where
   go s r =
     case r of

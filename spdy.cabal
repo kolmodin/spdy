@@ -23,7 +23,7 @@ executable spdy
     Network.SPDY.Utils
 
   build-depends: base, binary >= 0.5.2.0, binary-bits, network, text, bytestring, stm, conduit, zlib-bindings, transformers, tls, tls-extra, crypto-api, certificate
-  ghc-options: -threaded
+  ghc-options: -threaded -Wall
 
 executable app
   main-is:           app.hs
@@ -38,4 +38,4 @@ executable app
                  blaze-builder, case-insensitive,
                  wai-app-static, warp, attoparsec
 
-  ghc-options: -threaded -Wwarn
+  ghc-options: -threaded -Wall
