@@ -91,6 +91,8 @@ getFrame = do
 getControlFrameHeader :: BitGet ControlFrameHeader
 getControlFrameHeader = do
   controlFrameVersion <- getWord16be 15
+  unless (controlFrameVersion == 2) $ do
+    fail $ "Unsupported SPDY Frame Version: " ++ show controlFrameVersion
   controlFrameType <- getWord16be 16
   controlFrameFlags_ <- getWord8 8
   controlFrameLength <- getWord32be 24
