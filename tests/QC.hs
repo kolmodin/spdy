@@ -34,6 +34,7 @@ allTests =
           , testProperty "Syn Stream Frame" (arbitrarySynStreamFrame      >>= prop_roundtrip_frame)
           , testProperty "Syn Reply Frame"  (arbitrarySynReplyStreamFrame >>= prop_roundtrip_frame)
           , testProperty "Rst Stream Frame" (arbitraryRstStreamFrame      >>= prop_roundtrip_frame)
+          , testProperty "Go Away Frame"    (arbitraryGoAwayFrame         >>= prop_roundtrip_frame)
           , testProperty "Settings Frame"   (arbitrarySettingsFrame       >>= prop_roundtrip_frame)
           ]
       ]
@@ -115,6 +116,13 @@ arbitraryRstStreamFrame = do
   sId <- arbitraryWord31be
   status <- arbitrary
   return (RstStreamControlFrame flags sId status)
+
+arbitraryGoAwayFrame :: Gen Frame
+arbitraryGoAwayFrame = do
+  flags <- arbitrary
+  sId <- arbitraryWord31be
+  status <- arbitrary
+  return (GoAwayFrame flags sId status)
 
 arbitrarySettingsFrame :: Gen Frame
 arbitrarySettingsFrame = do

@@ -11,6 +11,8 @@ import Data.Binary.Bits.Put
 
 import Data.Word
 
+import Control.Monad ( unless )
+
 import Data.ByteString.Char8 () -- IsString instance
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as L
@@ -48,6 +50,10 @@ data Frame
       finStreamFrameStatus :: Word32 }
   | PingControlFrame {
       pingControlFrameId :: Word32 }
+  | GoAwayFrame {
+      controlFrameFlags :: Word8,
+      goAwayLastGoodStreamID :: Word32,
+      goAwayStatusCode :: Word32 } -- really 32 bits?
   | SettingsFrame {
       controlFrameFlags :: Word8,
       settingsFrameValues :: [(Word32, Word8, Word32)] }
@@ -120,7 +126,7 @@ getControlFrameBody header =
     4 -> getSettingsFrame header
     5 -> fail "Received NOOP frame. Not implemented."
     6 -> getPing
-    7 -> fail "Received GOAWAY frame. Not implemented."
+    7 -> getGoAway header
     8 -> fail "Received HEADERS frame. Not implemented."
     n -> fail $ "Received unknown control frame type = " ++ show n
 
@@ -159,6 +165,14 @@ getPing :: BitGet Frame
 getPing = do
   pingControlFrameId <- getWord32be 32
   return PingControlFrame { .. }
+
+getGoAway :: ControlFrameHeader -> BitGet Frame
+getGoAway header = do
+  let controlFrameFlags = controlFrameFlags_ header
+  _ <- getWord8 1 -- skipped
+  goAwayLastGoodStreamID <- getWord32be 31
+  goAwayStatusCode <- getWord32be 32
+  return GoAwayFrame { .. }
 
 getSettingsFrame :: ControlFrameHeader -> BitGet Frame
 getSettingsFrame header = do
@@ -245,6 +259,14 @@ putFrame frame = do
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 
+    GoAwayFrame { .. } -> do
+      let payload = runPut $ runBitPut $ do
+            putBool False -- ignored
+            putWord32be 31 goAwayLastGoodStreamID
+            putWord32be 32 goAwayStatusCode
+      putControlFrameHeader (mkControlHeader frame payload)
+      mapM_ putByteString (L.toChunks payload)
+
     SettingsFrame { .. } -> do
       let payload = runPut $ runBitPut $ do
             mapM_ putValue settingsFrameValues
@@ -266,6 +288,7 @@ mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
                          RstStreamControlFrame {} -> 3
                          SettingsFrame         {} -> 4
                          PingControlFrame      {} -> 6
+                         GoAwayFrame           {} -> 7
   , controlFrameFlags_ = case frame of
                            PingControlFrame {} -> 0
                            _                   -> controlFrameFlags frame
