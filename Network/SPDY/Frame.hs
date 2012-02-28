@@ -116,8 +116,11 @@ getControlFrameBody header =
     2 -> getSynReplyStream header
     3 -> getRstStream header
     4 -> getSettingsFrame header
+    5 -> fail "Received NOOP frame. Not implemented."
     6 -> getPing
-    _ -> error "not yet implemented control frame type"
+    7 -> fail "Received GOAWAY frame. Not implemented."
+    8 -> fail "Received HEADERS frame. Not implemented."
+    n -> fail $ "Received unknown control frame type = " ++ show n
 
 getSynStream :: ControlFrameHeader -> BitGet Frame
 getSynStream header = do
