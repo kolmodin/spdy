@@ -192,7 +192,9 @@ popper io = go id
 
 onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ()
 onSynStreamFrame app sockaddr state sId pri nvh = do
-  req <- buildReq sockaddr nvh -- catch errors, return protocol_error on stream
+  req <- case buildReq sockaddr nvh of -- catch errors, return protocol_error on stream
+           Right req -> return req
+           Left err -> fail err
   runResourceT $ do
     resp <- app req
     let (status, responseHeaders, source) = responseSource resp
@@ -225,7 +227,7 @@ onSynStreamFrame app sockaddr state sId pri nvh = do
       (\_ -> liftIO $ enqueueFrame state $ return $ DataFrame sId 1 "")
 
 -- Throws errors on failures.
-buildReq :: SockAddr -> NameValueHeaderBlock -> IO Request
+buildReq :: SockAddr -> NameValueHeaderBlock -> Either String Request
 buildReq sockaddr nvh = do
   method <- case lookup (decodeUtf8 "method") nvh of
               Just m -> return m
