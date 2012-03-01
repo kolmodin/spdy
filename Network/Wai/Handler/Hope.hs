@@ -31,7 +31,7 @@ import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
 
-import Control.Exception ( Exception, SomeException )
+import Control.Exception ( Exception, SomeException, throwIO )
 import Data.Typeable
 
 import Codec.Zlib
@@ -319,7 +319,7 @@ sessionHandler handler tlsctx sockaddr = do
   where
   go s r =
     case r of
-      Fail _ _ msg -> error msg
+      Fail _ _ msg -> throwIO (SPDYParseException msg)
       Partial f -> do
         raw <- TLS.recvData tlsctx
         putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
