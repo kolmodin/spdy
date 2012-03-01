@@ -206,7 +206,7 @@ onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -
 onSynStreamFrame app sockaddr state sId pri nvh = do
   req <- case buildReq sockaddr nvh of -- catch errors, return protocol_error on stream
            Right req -> return req
-           Left err -> fail err
+           Left err -> throwIO (SPDYNVHException err)
   runResourceT $ do
     resp <- app req
     let (status, responseHeaders, source) = responseSource resp
@@ -238,29 +238,28 @@ onSynStreamFrame app sockaddr state sId pri nvh = do
         return (StateProcessing ()))
       (\_ -> liftIO $ enqueueFrame state $ return $ DataFrame sId 1 "")
 
--- Throws errors on failures.
 buildReq :: SockAddr -> NameValueHeaderBlock -> Either String Request
 buildReq sockaddr nvh = do
   method <- case lookup (decodeUtf8 "method") nvh of
               Just m -> return m
-              Nothing -> fail "no method in NVH block"
+              Nothing -> Left "no method in NVH block"
   version <- case parseVersion <$> encodeUtf8 <$> lookup (decodeUtf8 "version") nvh of
                Just (Right v) -> return v
-               Just (Left err) -> fail "could not parse http version in nvh block"
-               Nothing -> fail "no http version in nvh block"
+               Just (Left err) -> Left "could not parse http version in nvh block"
+               Nothing -> Left "no http version in nvh block"
 
   (host,port') <-
     case T.split (==':') <$> lookup (decodeUtf8 "host") nvh of
       Just [host,port] -> return (encodeUtf8 host, T.decimal port)
-      _                -> fail "no or invalid host in nvh block"
+      _                -> Left "no or invalid host in nvh block"
 
   port <- case port' of
             Right (p,"") -> return p
-            _            -> fail "invalid port in nvh field 'host'"
+            _            -> Left "invalid port in nvh field 'host'"
  
   rawPath <- case lookup (decodeUtf8 "url") nvh of
                Just str -> return str
-               Nothing -> fail "url parameter missing in nvh block"
+               Nothing -> Left "url parameter missing in nvh block"
 
   (path,query) <-
     case T.break (=='?') rawPath of
