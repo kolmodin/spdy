@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards, OverloadedStrings, DeriveDataTypeable #-}
 module Network.Wai.Handler.Hope where
 
 import Network.Wai
@@ -30,6 +30,9 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
+
+import Control.Exception ( Exception, SomeException )
+import Data.Typeable
 
 import Codec.Zlib
 import Data.Text.Encoding ( encodeUtf8, decodeUtf8 )
@@ -136,6 +139,13 @@ data StreamState = StreamState
   , streamStatePriority :: Word8
   , streamStateReplyThread :: ThreadId
   }
+
+data SPDYException
+  = SPDYParseException String
+  | SPDYNVHException String
+  deriving (Show,Typeable)
+
+instance Exception SPDYException
 
 initSession :: IO SessionState
 initSession = do
