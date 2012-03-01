@@ -97,14 +97,14 @@ run port app = withSocketsDo $ do
 
   let loop = do
         (conn, sockaddr) <- accept sock
-        _ <- forkIO $ runResourceT $ do
-          handle <- liftIO $ socketToHandle conn ReadWriteMode
-          cryptoR <- liftIO (newGenIO :: IO SystemRandom)
+        _ <- forkIO $ do
+          handle <- socketToHandle conn ReadWriteMode
+          cryptoR <- newGenIO :: IO SystemRandom
           tlsctx <- TLS.server (myParams cert pk) cryptoR handle
           TLS.handshake tlsctx
           proto <- TLS.getNegotiatedProtocol tlsctx
           case proto of
-            Just "spdy/2" -> (sessionHandler (frameHandler app sockaddr)) tlsctx sockaddr
+            Just "spdy/2" -> sessionHandler (frameHandler app sockaddr) tlsctx sockaddr
             Just p -> liftIO $ putStrLn ("client suggested to not use spdy/2: " ++ show p)
             Nothing -> liftIO $ putStrLn "can't happen with chrome, client didn't use NPN"
         loop
@@ -123,7 +123,7 @@ run port app = withSocketsDo $ do
           -- }
       }
 
-type FrameHandler m = SessionState -> Frame -> ResourceT m SessionState
+type FrameHandler = SessionState -> Frame -> IO SessionState
 
 data SessionState = SessionState
   { sessionStateSendQueue :: TVar [IO Frame]  -- TODO(kolmodin): use a priority queue
@@ -154,19 +154,19 @@ initSession = do
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
   return $ SessionState queue [] zInflate zDeflate 1 2
 
-frameHandler :: ResourceIO m => Application -> SockAddr -> FrameHandler m
+frameHandler :: Application -> SockAddr -> FrameHandler
 frameHandler app sockaddr state frame = do
-  liftIO $ print frame
+  print frame
   case frame of
     SynStreamControlFrame flags sId assId pri nvh -> do
       state' <- createStream app sockaddr state sId pri nvh
       return state'
     RstStreamControlFrame flags sId status -> do
-      liftIO $ putStrLn "RstStream... we're screwed."
+      putStrLn "RstStream... we're screwed."
       -- TODO: remove all knowledge of this stream. empty send buffer.
       return state
     PingControlFrame pingId -> do
-      liftIO $ enqueueFrame state $ return (PingControlFrame pingId)
+      enqueueFrame state $ return (PingControlFrame pingId)
       return state
     SettingsFrame flags values -> do
       return state
@@ -179,15 +179,15 @@ enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
     q <- readTVar queue
     writeTVar queue (q ++ [frame])
 
-createStream :: ResourceIO m => Application -> SockAddr -> SessionState -> Word32 -> Word8 -> S.ByteString -> ResourceT m SessionState
+createStream :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -> S.ByteString -> IO SessionState
 createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) sId pri nvhBytes = do
-  liftIO $ putStrLn $ "Creating stream context, id = " ++ show sId
-  nvhChunks <- liftIO $ do a <- withInflateInput zInflate nvhBytes popper
-                           b <- flushInflate zInflate
-                           return (a++[b])
+  putStrLn $ "Creating stream context, id = " ++ show sId
+  nvhChunks <- do a <- withInflateInput zInflate nvhBytes popper
+                  b <- flushInflate zInflate
+                  return (a++[b])
   let Done _ _ nvh = eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks
-  liftIO $ print (sId, pri, nvh)
-  tId <- liftIO $ forkIO $ onSynStreamFrame app sockaddr state sId pri nvh
+  print (sId, pri, nvh)
+  tId <- forkIO $ onSynStreamFrame app sockaddr state sId pri nvh
   let streamState = StreamState sId pri tId
   return state { sessionStateStreamStates = streamState : sessionStateStreamStates state }
   where
@@ -311,10 +311,10 @@ sender tlsctx queue = go
              return (frame, len-1)
         [] -> retry
 
-sessionHandler :: ResourceIO m => FrameHandler m -> TLSCtx Handle -> SockAddr -> ResourceT m ()
+sessionHandler :: FrameHandler -> TLSCtx Handle -> SockAddr -> IO ()
 sessionHandler handler tlsctx sockaddr = do
-  initS <- liftIO $ initSession
-  liftIO $ forkIO $ sender tlsctx (sessionStateSendQueue initS)
+  initS <- initSession
+  forkIO $ sender tlsctx (sessionStateSendQueue initS)
   go initS (runGetPartial (runBitGet getFrame))
   where
   go s r =
@@ -322,9 +322,9 @@ sessionHandler handler tlsctx sockaddr = do
       Fail _ _ msg -> error msg
       Partial f -> do
         raw <- TLS.recvData tlsctx
-        liftIO $ putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
+        putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
         go s (f $ Just raw)
       Done rest _pos frame -> do
-        liftIO $ putStrLn "Parsed frame."
+        putStrLn "Parsed frame."
         s' <- handler s frame
         go s' (runGetPartial (runBitGet getFrame) `feed` rest)
