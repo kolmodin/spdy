@@ -125,7 +125,7 @@ getControlFrameBody header =
     3 -> getRstStream header
     4 -> getSettingsFrame header
     5 -> fail "Received NOOP frame. Not implemented."
-    6 -> getPing
+    6 -> getPing header
     7 -> getGoAway header
     8 -> fail "Received HEADERS frame. Not implemented."
     n -> fail $ "Received unknown control frame type = " ++ show n
@@ -163,8 +163,14 @@ getRstStream header = do
   rstStreamFrameStatusCode <- getWord32be 32
   return RstStreamControlFrame { .. }
 
-getPing :: BitGet Frame
-getPing = do
+getPing :: ControlFrameHeader -> BitGet Frame
+getPing header = do
+  let frameFlags  = controlFrameFlags_ header
+      frameLength = controlFrameLength header
+  unless (frameFlags == 0) $
+    fail $ "PING: Expected Control Frame Flags to be 0, it's " ++ show frameFlags
+  unless (frameLength == 4) $
+    fail $ "PING: Expected Control Frame Length to be 4, it's " ++ show frameLength
   pingControlFrameId <- getWord32be 32
   return PingControlFrame { .. }
 
