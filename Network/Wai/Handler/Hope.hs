@@ -31,7 +31,7 @@ import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
 
-import Control.Exception ( Exception, SomeException, throwIO, Handler(..), catches )
+import Control.Exception ( Exception, throwIO, Handler(..), catches )
 import Data.Typeable
 
 import Codec.Zlib
@@ -194,6 +194,7 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
   feedAll r [] = r
   feedAll r (x:xs) = r `feed` x `feedAll` xs
 
+popper :: Monad m => m (Maybe a) -> m [a]
 popper io = go id
   where
   go front = do
@@ -321,7 +322,7 @@ sender tlsctx queue = go
 sessionHandler :: FrameHandler -> TLSCtx Handle -> SockAddr -> IO ()
 sessionHandler handler tlsctx sockaddr = do
   initS <- initSession
-  forkIO $ sender tlsctx (sessionStateSendQueue initS)
+  _ <- forkIO $ sender tlsctx (sessionStateSendQueue initS)
   go initS (runGetPartial (runBitGet getFrame))
     `catches` [ Handler (\e ->
                    case e of
