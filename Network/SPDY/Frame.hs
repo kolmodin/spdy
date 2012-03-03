@@ -153,6 +153,11 @@ getSynReplyStream header = do
 getRstStream :: ControlFrameHeader -> BitGet Frame
 getRstStream header = do
   let controlFrameFlags = controlFrameFlags_ header
+      frameLength = controlFrameLength header
+  unless (controlFrameFlags == 0) $
+    fail $ "RST_STREAM: Expected Control Frame Flags to be 0, it's " ++ show controlFrameFlags
+  unless (frameLength == 8) $
+    fail $ "RST_STREAM: Expected Control Frame Length to be 8, it's " ++ show frameLength
   _ <- getWord8 1 -- skipped
   rstStreamFrameStreamID <- getWord32be 31
   rstStreamFrameStatusCode <- getWord32be 32
