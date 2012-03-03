@@ -263,10 +263,8 @@ putFrame frame = do
       putWord32be 32 rstStreamFrameStatusCode
 
     PingControlFrame { .. } -> do
-      let payload = runPut $ runBitPut $ do
-            putWord32be 32 pingControlFrameId
-      putControlFrameHeader (mkControlHeader frame payload)
-      mapM_ putByteString (L.toChunks payload)
+      putControlFrameHeader (mkControlHeaderWithLength frame 4)
+      putWord32be 32 pingControlFrameId
 
     GoAwayFrame { .. } -> do
       putControlFrameHeader (mkControlHeaderWithLength frame 4)
