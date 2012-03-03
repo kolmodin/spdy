@@ -52,8 +52,7 @@ data Frame
       pingControlFrameId :: Word32 }
   | GoAwayFrame {
       controlFrameFlags :: Word8,
-      goAwayLastGoodStreamID :: Word32,
-      goAwayStatusCode :: Word32 } -- really 32 bits?
+      goAwayLastGoodStreamID :: Word32 }
   | SettingsFrame {
       controlFrameFlags :: Word8,
       settingsFrameValues :: [(Word32, Word8, Word32)] }
@@ -182,7 +181,6 @@ getGoAway header = do
     fail $ "GOAWAY: Expected Control Frame Length to be 4, it's " ++ show frameLength
   _ <- getWord8 1 -- skipped
   goAwayLastGoodStreamID <- getWord32be 31
-  goAwayStatusCode <- getWord32be 32
   return GoAwayFrame { .. }
 
 getSettingsFrame :: ControlFrameHeader -> BitGet Frame
@@ -271,12 +269,9 @@ putFrame frame = do
       mapM_ putByteString (L.toChunks payload)
 
     GoAwayFrame { .. } -> do
-      let payload = runPut $ runBitPut $ do
-            putBool False -- ignored
-            putWord32be 31 goAwayLastGoodStreamID
-            putWord32be 32 goAwayStatusCode
-      putControlFrameHeader (mkControlHeader frame payload)
-      mapM_ putByteString (L.toChunks payload)
+      putControlFrameHeader (mkControlHeaderWithLength frame 4)
+      putBool False -- ignored
+      putWord32be 31 goAwayLastGoodStreamID
 
     SettingsFrame { .. } -> do
       let payload = runPut $ runBitPut $ do

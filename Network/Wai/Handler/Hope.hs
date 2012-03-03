@@ -170,7 +170,7 @@ frameHandler app sockaddr state frame = do
       return state
     SettingsFrame flags values -> do
       return state
-    GoAwayFrame flags lgsID status -> do
+    GoAwayFrame flags lgsID -> do
       return state
 
 enqueueFrame :: SessionState -> IO Frame -> IO ()
@@ -202,9 +202,9 @@ popper io = go id
       Nothing -> return (front [])
       Just x -> go (front . (:) x)
 
-sendGoAway :: SessionState -> Word8 -> Word32 -> Word32 -> IO ()
-sendGoAway state flags sId status = do
-  enqueueFrame state $ return $ GoAwayFrame flags sId status
+sendGoAway :: SessionState -> Word8 -> Word32 -> IO ()
+sendGoAway state flags sId = do
+  enqueueFrame state $ return $ GoAwayFrame flags sId
 
 sendRstStream :: SessionState -> Word8 -> Word32 -> Word32 -> IO ()
 sendRstStream state flags sId status = do
@@ -326,13 +326,13 @@ sessionHandler handler tlsctx sockaddr = do
     `catches` [ Handler (\e ->
                    case e of
                      SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
-                                                  sendGoAway initS 0 0 1
+                                                  sendGoAway initS 0 0
                      SPDYNVHException sId str -> do putStrLn ("Caught this! " ++ show e)
                                                     sendRstStream initS 0 sId 1)
               , Handler (\e -> 
                    case e of
                      ZlibException n -> do putStrLn ("Caught this! " ++ show e)
-                                           sendGoAway initS 0 0 1)
+                                           sendGoAway initS 0 0)
               ] 
   where
   go s r =

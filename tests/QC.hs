@@ -121,8 +121,7 @@ arbitraryGoAwayFrame :: Gen Frame
 arbitraryGoAwayFrame = do
   flags <- arbitrary
   sId <- arbitraryWord31be
-  status <- arbitrary
-  return (GoAwayFrame flags sId status)
+  return (GoAwayFrame flags sId)
 
 arbitrarySettingsFrame :: Gen Frame
 arbitrarySettingsFrame = do
