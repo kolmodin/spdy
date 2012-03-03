@@ -139,10 +139,10 @@ getSynStream header = do
   synStreamFrameAssociatedStreamID <- getWord32be 31
   synStreamFramePriority <- getWord8 2
   _ <- getWord16be 14
-  let nvhLength = fromIntegral (controlFrameLength header) - 10
-  unless (nvhLength >= 1) $
-    fail $ "SYN_STREAM: frame length too short, length = " ++ show nvhLength
-  synStreamFrameNVHCompressed <- getByteString nvhLength
+  let contentLength = fromIntegral (controlFrameLength header)
+  unless (contentLength >= 11) $
+    fail $ "SYN_STREAM: frame length too short, length = " ++ show contentLength
+  synStreamFrameNVHCompressed <- getByteString (contentLength - 10)
   return SynStreamControlFrame { .. }
 
 getSynReplyStream :: ControlFrameHeader -> BitGet Frame
