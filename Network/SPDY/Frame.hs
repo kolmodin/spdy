@@ -177,6 +177,9 @@ getPing header = do
 getGoAway :: ControlFrameHeader -> BitGet Frame
 getGoAway header = do
   let controlFrameFlags = controlFrameFlags_ header
+      frameLength = controlFrameLength header
+  unless (frameLength == 4) $
+    fail $ "GOAWAY: Expected Control Frame Length to be 4, it's " ++ show frameLength
   _ <- getWord8 1 -- skipped
   goAwayLastGoodStreamID <- getWord32be 31
   goAwayStatusCode <- getWord32be 32
