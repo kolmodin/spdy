@@ -31,7 +31,7 @@ import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Monad.STM
 
-import Control.Exception ( Exception, SomeException, throwIO )
+import Control.Exception ( Exception, SomeException, throwIO, Handler(..), catches )
 import Data.Typeable
 
 import Codec.Zlib
@@ -56,7 +56,7 @@ import qualified Data.Certificate.X509 as X509
 import qualified Data.Certificate.PEM as PEM
 import qualified Data.Certificate.KeyRSA as KeyRSA
 
-
+import Prelude hiding ( catch )
 
 readCertificate :: FilePath -> IO X509.X509
 readCertificate filepath = do
@@ -142,7 +142,7 @@ data StreamState = StreamState
 
 data SPDYException
   = SPDYParseException String
-  | SPDYNVHException String
+  | SPDYNVHException Word32 String
   deriving (Show,Typeable)
 
 instance Exception SPDYException
@@ -187,7 +187,7 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
                   return (a++[b])
   let Done _ _ nvh = eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks
   print (sId, pri, nvh)
-  tId <- forkIO $ onSynStreamFrame app sockaddr state sId pri nvh
+  tId <- onSynStreamFrame app sockaddr state sId pri nvh
   let streamState = StreamState sId pri tId
   return state { sessionStateStreamStates = streamState : sessionStateStreamStates state }
   where
@@ -202,12 +202,20 @@ popper io = go id
       Nothing -> return (front [])
       Just x -> go (front . (:) x)
 
-onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ()
+sendGoAway :: SessionState -> Word8 -> Word32 -> Word32 -> IO ()
+sendGoAway state flags sId status = do
+  enqueueFrame state $ return $ GoAwayFrame flags sId status
+
+sendRstStream :: SessionState -> Word8 -> Word32 -> Word32 -> IO ()
+sendRstStream state flags sId status = do
+  enqueueFrame state $ return $ RstStreamControlFrame flags sId status
+
+onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -> NameValueHeaderBlock -> IO ThreadId
 onSynStreamFrame app sockaddr state sId pri nvh = do
   req <- case buildReq sockaddr nvh of -- catch errors, return protocol_error on stream
            Right req -> return req
-           Left err -> throwIO (SPDYNVHException err)
-  runResourceT $ do
+           Left err -> throwIO (SPDYNVHException sId err)
+  forkIO $ runResourceT $ do
     resp <- app req
     let (status, responseHeaders, source) = responseSource resp
         headerStatus = ("status", showStatus status)
@@ -315,6 +323,17 @@ sessionHandler handler tlsctx sockaddr = do
   initS <- initSession
   forkIO $ sender tlsctx (sessionStateSendQueue initS)
   go initS (runGetPartial (runBitGet getFrame))
+    `catches` [ Handler (\e ->
+                   case e of
+                     SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
+                                                  sendGoAway initS 0 0 1
+                     SPDYNVHException sId str -> do putStrLn ("Caught this! " ++ show e)
+                                                    sendRstStream initS 0 sId 1)
+              , Handler (\e -> 
+                   case e of
+                     ZlibException n -> do putStrLn ("Caught this! " ++ show e)
+                                           sendGoAway initS 0 0 1)
+              ] 
   where
   go s r =
     case r of
