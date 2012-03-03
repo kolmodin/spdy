@@ -44,10 +44,6 @@ data Frame
       controlFrameFlags :: Word8,
       rstStreamFrameStreamID :: Word32,
       rstStreamFrameStatusCode :: RstStreamStatusCode }
-  | FinStreamControlFrame {
-      controlFrameFlags :: Word8,
-      finStreamFrameStreamID :: Word32,
-      finStreamFrameStatus :: Word32 }
   | PingControlFrame {
       pingControlFrameId :: Word32 }
   | GoAwayFrame {
