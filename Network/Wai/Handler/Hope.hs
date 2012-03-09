@@ -172,6 +172,8 @@ frameHandler app sockaddr state frame = do
       return state
     GoAwayFrame flags lgsID -> do
       return state
+    NoopControlFrame -> do
+      return state
 
 enqueueFrame :: SessionState -> IO Frame -> IO ()
 enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
