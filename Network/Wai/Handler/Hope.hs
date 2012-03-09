@@ -142,7 +142,7 @@ data StreamState = StreamState
 
 data SPDYException
   = SPDYParseException String
-  | SPDYNVHException Word32 String
+  | SPDYNVHException (Maybe Word32) String
   deriving (Show,Typeable)
 
 instance Exception SPDYException
@@ -185,7 +185,10 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
   nvhChunks <- do a <- withInflateInput zInflate nvhBytes popper
                   b <- flushInflate zInflate
                   return (a++[b])
-  let Done _ _ nvh = eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks
+  nvh <- case eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks of
+           Done _ _ nvh -> return nvh
+           Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
+           Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
   print (sId, pri, nvh)
   tId <- onSynStreamFrame app sockaddr state sId pri nvh
   let streamState = StreamState sId pri tId
@@ -203,9 +206,9 @@ popper io = go id
       Nothing -> return (front [])
       Just x -> go (front . (:) x)
 
-sendGoAway :: SessionState -> Word8 -> Word32 -> IO ()
-sendGoAway state flags sId = do
-  enqueueFrame state $ return $ GoAwayFrame flags sId
+sendGoAway :: SessionState -> Word32 -> IO ()
+sendGoAway state sId = do
+  enqueueFrame state $ return $ GoAwayFrame 0 sId
 
 sendRstStream :: SessionState -> Word8 -> Word32 -> Word32 -> IO ()
 sendRstStream state flags sId status = do
@@ -215,7 +218,7 @@ onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word32 -> Word8 -
 onSynStreamFrame app sockaddr state sId pri nvh = do
   req <- case buildReq sockaddr nvh of -- catch errors, return protocol_error on stream
            Right req -> return req
-           Left err -> throwIO (SPDYNVHException sId err)
+           Left err -> throwIO (SPDYNVHException (Just sId) err)
   forkIO $ runResourceT $ do
     resp <- app req
     let (status, responseHeaders, source) = responseSource resp
@@ -327,13 +330,15 @@ sessionHandler handler tlsctx sockaddr = do
     `catches` [ Handler (\e ->
                    case e of
                      SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
-                                                  sendGoAway initS 0 0
-                     SPDYNVHException sId str -> do putStrLn ("Caught this! " ++ show e)
-                                                    sendRstStream initS 0 sId 1)
+                                                  sendGoAway initS 0
+                     SPDYNVHException (Just sId) str -> do putStrLn ("Caught this! " ++ show e)
+                                                           sendRstStream initS 0 sId 1
+                     SPDYNVHException Nothing    str -> do putStrLn ("Caught this! " ++ show e)
+                                                           sendGoAway initS 0)
               , Handler (\e -> 
                    case e of
                      ZlibException n -> do putStrLn ("Caught this! " ++ show e)
-                                           sendGoAway initS 0 0)
+                                           sendGoAway initS 0)
               ] 
   where
   go s r =
