@@ -27,8 +27,8 @@ ourSPDYVersion = 2
 
 data Frame
   = DataFrame {
-      dataFrameStreamID :: Word32,
       dataFrameFlags :: Word8,
+      dataFrameStreamID :: Word32,
       dataFramePayload :: B.ByteString }
   | SynStreamControlFrame {
       controlFrameFlags :: Word8,

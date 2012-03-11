@@ -92,7 +92,7 @@ arbitraryDataFrame = do
  sId <- arbitraryWord31be 
  flags <- arbitrary
  payload <- genPayload
- return (DataFrame sId flags payload)
+ return (DataFrame flags sId payload)
 
 arbitrarySynStreamFrame :: Gen Frame
 arbitrarySynStreamFrame = do
@@ -112,10 +112,9 @@ arbitrarySynReplyStreamFrame = do
 
 arbitraryRstStreamFrame :: Gen Frame
 arbitraryRstStreamFrame = do
-  flags <- arbitrary
   sId <- arbitraryWord31be
   status <- arbitrary
-  return (RstStreamControlFrame flags sId status)
+  return (RstStreamControlFrame 0 sId status)
 
 arbitraryGoAwayFrame :: Gen Frame
 arbitraryGoAwayFrame = do

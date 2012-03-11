@@ -184,7 +184,7 @@ onSynStreamFrame state sId pri nvh = do
     putStrLn "Constructed frame:"
     print ("syn_reply", sId, nvh')
     return (SynReplyControlFrame 0 sId nvhReply) :: IO Frame
-  enqueueFrame state $ return $ DataFrame sId 1 $ S.concat ("<html><h1>hello from spdy</h1><br/>" : S.concat ([ C8.pack (show b ++ "<br/>") | b <- nvh ]) : "</html>" : [])
+  enqueueFrame state $ return $ DataFrame 1 sId $ S.concat ("<html><h1>hello from spdy</h1><br/>" : S.concat ([ C8.pack (show b ++ "<br/>") | b <- nvh ]) : "</html>" : [])
   where
   utf8 (s,t) = (decodeUtf8 s, decodeUtf8 t)
 
