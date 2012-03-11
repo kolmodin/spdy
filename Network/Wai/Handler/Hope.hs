@@ -60,6 +60,9 @@ import qualified Data.Certificate.X509 as X509
 import qualified Data.Certificate.PEM as PEM
 import qualified Data.Certificate.KeyRSA as KeyRSA
 
+import Data.HashMap.Strict ( HashMap )
+import qualified Data.HashMap.Strict as Map
+
 import Prelude hiding ( catch )
 
 readCertificate :: FilePath -> IO X509.X509
@@ -131,7 +134,7 @@ type FrameHandler = SessionState -> Frame -> IO SessionState
 
 data SessionState = SessionState
   { sessionStateSendQueue :: TVar [IO Frame]  -- TODO(kolmodin): use a priority queue
-  , sessionStateStreamStates :: [StreamState]
+  , sessionStateStreamStates :: HashMap Word32 StreamState
   , sessionStateNVHReceiveZContext :: Inflate
   , sessionStateNVHSendZContext :: Deflate
   , sessionStateNextValidSendID :: Word32
@@ -157,7 +160,7 @@ initSession = do
   queue <- newTVarIO []
   zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
-  return $ SessionState queue [] zInflate zDeflate 1 2
+  return $ SessionState queue Map.empty zInflate zDeflate 1 2
 
 frameHandler :: Application -> SockAddr -> FrameHandler
 frameHandler app sockaddr state frame = do
@@ -172,8 +175,7 @@ frameHandler app sockaddr state frame = do
       return state
     DataFrame flags sId payload -> do
       let flag_fin = testBit flags 0
-      streamM <- getStreamState state sId
-      case streamM of
+      case getStreamState state sId of
         Nothing -> do sendRstStream state sId 2 -- 2 == INVALID_STREAM
                       return state
         Just s -> do
@@ -196,19 +198,18 @@ frameHandler app sockaddr state frame = do
     NoopControlFrame -> do
       return state
 
-getStreamState :: SessionState -> Word32 -> IO (Maybe StreamState)
-getStreamState state sId = do
-  let streamStates = sessionStateStreamStates state
-  case filter (\s -> streamStateID s == sId) streamStates of
-    [s] -> return (Just s)
-    [] -> return Nothing
+getStreamState :: SessionState -> Word32 -> Maybe StreamState
+getStreamState state sId = Map.lookup sId (sessionStateStreamStates state)
 
 updateStreamState :: SessionState -> StreamState -> SessionState
 updateStreamState state stream = 
   let streamStates = sessionStateStreamStates state
-      sId = streamStateID stream
-      streams = filter (\s -> streamStateID s /= sId) streamStates
-  in state { sessionStateStreamStates = stream : streams }
+  in state { sessionStateStreamStates = Map.adjust (const stream) (streamStateID stream) streamStates }
+
+insertStreamState :: SessionState -> StreamState -> SessionState
+insertStreamState state stream = 
+  let streamStates = sessionStateStreamStates state
+  in state { sessionStateStreamStates = Map.insert (streamStateID stream) stream streamStates }
 
 enqueueFrame :: SessionState -> IO Frame -> IO ()
 enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
@@ -229,7 +230,7 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
   print (sId, pri, nvh)
   (tId, bodyChan) <- onSynStreamFrame app sockaddr state flags sId pri nvh
   let streamState = StreamState sId pri tId bodyChan
-  return state { sessionStateStreamStates = streamState : sessionStateStreamStates state }
+  return (insertStreamState state streamState)
   where
   feedAll r [] = r
   feedAll r (x:xs) = r `feed` x `feedAll` xs

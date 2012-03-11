@@ -36,6 +36,6 @@ executable app
                  bytestring, stm, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
                  crypto-api, certificate, wai, http-types, vault,
                  blaze-builder, case-insensitive,
-                 wai-app-static, warp, attoparsec
+                 wai-app-static, warp, attoparsec, unordered-containers
 
   ghc-options: -threaded -Wall
