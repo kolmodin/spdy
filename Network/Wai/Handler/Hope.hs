@@ -110,7 +110,7 @@ run port app = withSocketsDo $ do
           tlsctx <- TLS.server (myParams cert pk) cryptoR handle
           TLS.handshake tlsctx
           proto <- TLS.getNegotiatedProtocol tlsctx
-          let conn = Connection { connSend = \bs -> TLS.sendData tlsctx (L.fromChunks [bs])
+          let conn = Connection { connSend = TLS.sendData tlsctx
                                 , connClose = TLS.bye tlsctx >> sClose sock
                                 , connReceive = TLS.recvData tlsctx
                                 }
@@ -141,7 +141,7 @@ runWithConnection sockaddr conn app =
 type FrameHandler = SessionState -> Frame -> IO SessionState
 
 data Connection = Connection
-  { connSend :: S.ByteString -> IO ()
+  { connSend :: L.ByteString -> IO ()
   , connClose :: IO ()
   , connReceive :: IO S.ByteString
   }
@@ -382,7 +382,7 @@ sender conn queue = go
     frame <- frameIO
     print frame
     putStrLn (show len ++ " more items in queue")
-    mapM_ (connSend conn) (L.toChunks (runPut (runBitPut (putFrame frame))))
+    connSend conn (runPut (runBitPut (putFrame frame)))
     go
   getNextFrame =
     atomically $ do
