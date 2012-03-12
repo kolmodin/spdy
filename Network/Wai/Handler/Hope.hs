@@ -103,15 +103,19 @@ run port app = withSocketsDo $ do
   pk      <- readPrivateKey  "key.pem"
 
   let loop = do
-        (conn, sockaddr) <- accept sock
+        (sock, sockaddr) <- accept sock
         _ <- forkIO $ do
-          handle <- socketToHandle conn ReadWriteMode
+          handle <- socketToHandle sock ReadWriteMode
           cryptoR <- newGenIO :: IO SystemRandom
           tlsctx <- TLS.server (myParams cert pk) cryptoR handle
           TLS.handshake tlsctx
           proto <- TLS.getNegotiatedProtocol tlsctx
+          let conn = Connection { connSend = \bs -> TLS.sendData tlsctx (L.fromChunks [bs])
+                                , connClose = TLS.bye tlsctx >> sClose sock
+                                , connReceive = TLS.recvData tlsctx
+                                }
           case proto of
-            Just "spdy/2" -> sessionHandler (frameHandler app sockaddr) tlsctx sockaddr
+            Just "spdy/2" -> runWithConnection sockaddr conn app
             Just p -> liftIO $ putStrLn ("client suggested to not use spdy/2: " ++ show p)
             Nothing -> liftIO $ putStrLn "can't happen with chrome, client didn't use NPN"
         loop
@@ -130,7 +134,17 @@ run port app = withSocketsDo $ do
           -- }
       }
 
+runWithConnection :: SockAddr -> Connection -> Application -> IO ()
+runWithConnection sockaddr conn app =
+  sessionHandler (frameHandler app sockaddr) conn sockaddr
+
 type FrameHandler = SessionState -> Frame -> IO SessionState
+
+data Connection = Connection
+  { connSend :: S.ByteString -> IO ()
+  , connClose :: IO ()
+  , connReceive :: IO S.ByteString
+  }
 
 data SessionState = SessionState
   { sessionStateSendQueue :: TVar [IO Frame]  -- TODO(kolmodin): use a priority queue
@@ -359,8 +373,8 @@ chan2source chan =
                 Nothing -> return IOClosed
                 Just bs -> return (IOOpen bs))
 
-sender :: TLSCtx a -> TVar [IO Frame] -> IO ()
-sender tlsctx queue = go
+sender :: Connection -> TVar [IO Frame] -> IO ()
+sender conn queue = go
   where
   go = do
     (frameIO,len) <- getNextFrame
@@ -368,7 +382,7 @@ sender tlsctx queue = go
     frame <- frameIO
     print frame
     putStrLn (show len ++ " more items in queue")
-    TLS.sendData tlsctx (runPut (runBitPut (putFrame frame)))
+    mapM_ (connSend conn) (L.toChunks (runPut (runBitPut (putFrame frame))))
     go
   getNextFrame =
     atomically $ do
@@ -380,10 +394,10 @@ sender tlsctx queue = go
              return (frame, len-1)
         [] -> retry
 
-sessionHandler :: FrameHandler -> TLSCtx Handle -> SockAddr -> IO ()
-sessionHandler handler tlsctx sockaddr = do
+sessionHandler :: FrameHandler -> Connection -> SockAddr -> IO ()
+sessionHandler handler conn sockaddr = do
   initS <- initSession
-  _ <- forkIO $ sender tlsctx (sessionStateSendQueue initS)
+  _ <- forkIO $ sender conn (sessionStateSendQueue initS)
   go initS (runGetPartial (runBitGet getFrame))
     `catches` [ Handler (\e ->
                    case e of
@@ -403,8 +417,8 @@ sessionHandler handler tlsctx sockaddr = do
     case r of
       Fail _ _ msg -> throwIO (SPDYParseException msg)
       Partial f -> do
-        raw <- TLS.recvData tlsctx
-        putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network, tls socket " ++ show (TLS.ctxConnection tlsctx))
+        raw <- connReceive conn
+        putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network")
         go s (f $ Just raw)
       Done rest _pos frame -> do
         putStrLn "Parsed frame."
