@@ -198,6 +198,8 @@ frameHandler app sockaddr state frame = do
             Nothing -> do sendRstStream state sId 2 -- which error code?
                           return state
             Just chan -> do writeChan chan (Just payload)
+                            when flag_fin $ do
+                              writeChan chan Nothing
                             let s' | flag_fin = s { streamStateBodyChan = Nothing }
                                    | otherwise = s
                                 state' = updateStreamState state s'
