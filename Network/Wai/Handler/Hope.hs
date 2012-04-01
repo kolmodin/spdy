@@ -182,7 +182,7 @@ frameHandler app sockaddr state frame = do
   case frame of
     SynStreamControlFrame flags sId assId pri nvh -> do
       state' <- createStream app sockaddr state flags sId pri nvh
-      return state'
+      return state' { sessionStateLastValidReceiveID = sId }
     RstStreamControlFrame flags sId status -> do
       putStrLn "RstStream... we're screwed."
       -- TODO: remove all knowledge of this stream. empty send buffer.
@@ -236,17 +236,30 @@ enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
 createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> S.ByteString -> IO SessionState
 createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) flags sId pri nvhBytes = do
   putStrLn $ "Creating stream context, id = " ++ show sId
-  nvhChunks <- do a <- withInflateInput zInflate nvhBytes popper
-                  b <- flushInflate zInflate
-                  return (a++[b])
-  nvh <- case eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` nvhChunks of
-           Done _ _ nvh -> return nvh
-           Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
-           Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
+  nvh <- decodeNVH =<< inflateWithFlush zInflate nvhBytes
   print (sId, pri, nvh)
   (tId, bodyChan) <- onSynStreamFrame app sockaddr state flags sId pri nvh
   let streamState = StreamState sId pri tId bodyChan
   return (insertStreamState state streamState)
+
+inflateWithFlush :: Inflate -> S.ByteString -> IO [S.ByteString]
+inflateWithFlush zInflate bytes = do
+  a <- withInflateInput zInflate bytes popper
+  b <- flushInflate zInflate
+  return (a++[b])
+
+deflateWithFlush :: Deflate -> L.ByteString -> IO S.ByteString
+deflateWithFlush deflate lbs = do
+  str <- withDeflateInput deflate (S.concat $ L.toChunks lbs) popper
+  fl <- flushDeflate deflate popper
+  return (S.concat (str ++ fl))
+
+decodeNVH :: [S.ByteString] -> IO NameValueHeaderBlock
+decodeNVH bytes = do
+  case eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` bytes of
+    Done _ _ nvh -> return nvh
+    Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
+    Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
   where
   feedAll r [] = r
   feedAll r (x:xs) = r `feed` x `feedAll` xs
@@ -286,10 +299,8 @@ onSynStreamFrame app sockaddr state flags sId pri nvh = do
         appHeaders = [ (CA.foldedCase h, k) | (h,k) <- responseHeaders ]
     liftIO $ enqueueFrame state $ do
       let nvh' = List.sort $ map utf8 $ [headerStatus, headerVersion, headerServer] ++ appHeaders
-          nvhChunks = runPut (runBitPut (putNVHBlock nvh'))
-      str <- withDeflateInput (sessionStateNVHSendZContext state) (S.concat $ L.toChunks nvhChunks) popper
-      fl <- flushDeflate (sessionStateNVHSendZContext state) popper
-      let nvhReply = S.concat (str ++ fl)
+      nvhReply <- deflateWithFlush (sessionStateNVHSendZContext state)
+                                   (runPut (runBitPut (putNVHBlock nvh')))
       putStrLn "Constructed frame:"
       print ("syn_reply" :: String, sId, nvh')
       return (SynReplyControlFrame 0 sId nvhReply) :: IO Frame
