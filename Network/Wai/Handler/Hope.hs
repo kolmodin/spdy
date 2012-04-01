@@ -151,8 +151,8 @@ data SessionState = SessionState
   , sessionStateStreamStates :: HashMap Word32 StreamState
   , sessionStateNVHReceiveZContext :: Inflate
   , sessionStateNVHSendZContext :: Deflate
-  , sessionStateNextValidSendID :: Word32
-  , sessionStateNextValidReceiveID :: Word32
+  , sessionStateLastValidSendID :: Word32
+  , sessionStateLastValidReceiveID :: Word32
   }
 
 data StreamState = StreamState
@@ -174,7 +174,7 @@ initSession = do
   queue <- newTVarIO []
   zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
-  return $ SessionState queue Map.empty zInflate zDeflate 1 2
+  return $ SessionState queue Map.empty zInflate zDeflate 0 0
 
 frameHandler :: Application -> SockAddr -> FrameHandler
 frameHandler app sockaddr state frame = do
