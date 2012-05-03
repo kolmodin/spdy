@@ -49,4 +49,3 @@ advertiseSPDY spdyPort app request = do
     ResponseSource  s h source      -> ResponseSource  s (alternateProtocol:h) source
   where
   alternateProtocol = (mk "Alternate-Protocol", B.concat [C8.pack spdyPort, ":npn-spdy/2"])
-  
