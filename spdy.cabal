@@ -22,7 +22,7 @@ executable spdy
     Network.SPDY.Frame,
     Network.SPDY.Utils
 
-  build-depends: base, binary >= 0.5.2.0, binary-bits, network, text, bytestring, stm, conduit, zlib-bindings, transformers, tls, tls-extra, crypto-api, certificate
+  build-depends: base, binary >= 0.5.2.0, binary-bits, network, text, bytestring, stm, conduit, zlib-bindings, transformers, tls, tls-extra, crypto-api, certificate, pem
   ghc-options: -threaded -Wall
 
 executable app
@@ -32,10 +32,12 @@ executable app
     Network.SPDY.Frame,
     Network.SPDY.Utils
 
-  build-depends: base, binary >= 0.5.2.0, binary-bits, network, text,
-                 bytestring, stm, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
-                 crypto-api, certificate, wai, http-types, vault,
-                 blaze-builder, case-insensitive,
-                 wai-app-static, warp, attoparsec, unordered-containers
+  build-depends: base, bytestring, network, text, stm,
+                 binary >= 0.6.0.0, binary-bits, attoparsec,
+                 conduit == 0.4.*, zlib-bindings == 0.1.*,
+                 tls == 0.9.*, tls-extra, pem, crypto-api, certificate,
+                 wai, http-types, vault,
+                 transformers, blaze-builder, case-insensitive,
+                 wai-app-static, warp, unordered-containers
 
   ghc-options: -threaded -Wall

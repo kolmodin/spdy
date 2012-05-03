@@ -33,7 +33,9 @@ import Codec.Zlib
 import Data.Text ( Text )
 import Data.Text.Encoding ( decodeUtf8 )
 
+import Control.Applicative
 import Data.Monoid
+import Data.Either ( rights )
 import qualified Data.List as List
 import System.IO ( IOMode(ReadWriteMode), hWaitForInput, Handle, hIsClosed, hFlush )
 
@@ -42,36 +44,30 @@ import qualified Network.TLS as TLS
 import qualified Network.TLS.Extra as TLSE
 import Crypto.Random ( newGenIO, SystemRandom )
 
-
-
 import qualified Data.Certificate.X509 as X509
-import qualified Data.Certificate.PEM as PEM
+import qualified Data.PEM as PEM
 import qualified Data.Certificate.KeyRSA as KeyRSA
-
-
 
 readCertificate :: FilePath -> IO X509.X509
 readCertificate filepath = do
-    content <- S.readFile filepath
-    certdata <-
-        case PEM.parsePEMCert content of
-            Nothing -> error "no valid certificate section"
-            Just x  -> return x
-    case X509.decodeCertificate $ L.fromChunks [certdata] of
-        Left err -> error ("cannot decode certificate: " ++ err)
-        Right x  -> return x
+    certs <- rights . parseCerts . PEM.pemParseBS <$> S.readFile filepath
+    case certs of
+        []    -> error "no valid certificate found"
+        (x:_) -> return x
+    where parseCerts (Right pems) = map (X509.decodeCertificate . L.fromChunks . (:[]) . PEM.pemContent)
+                                  $ filter (flip elem ["CERTIFICATE", "TRUSTED CERTIFICATE"] . PEM.pemName) pems
+          parseCerts (Left err) = error $ "cannot parse PEM file: " ++ err
 
 readPrivateKey :: FilePath -> IO TLS.PrivateKey
 readPrivateKey filepath = do
-    content <- S.readFile filepath
-    pkdata <-
-        case PEM.parsePEMKeyRSA content of
-            Nothing -> error "no valid RSA key section"
-            Just x  -> return (L.fromChunks [x])
-    case KeyRSA.decodePrivate pkdata of
-        Left err -> error ("cannot decode key: " ++ err)
-        Right (_pub, x)  -> return $ TLS.PrivRSA x
+    pk <- rights . parseKey . PEM.pemParseBS <$> S.readFile filepath
+    case pk of
+        []    -> error "no valid RSA key found"
+        (x:_) -> return x
 
+    where parseKey (Right pems) = map (fmap (TLS.PrivRSA . snd) . KeyRSA.decodePrivate . L.fromChunks . (:[]) . PEM.pemContent)
+                                $ filter ((== "RSA PRIVATE KEY") . PEM.pemName) pems
+          parseKey (Left err) = error $ "Cannot parse PEM file: " ++ err
 
 server :: (TLSCtx Handle -> SockAddr -> ResourceT IO ()) -> String -> IO ()
 server handler port = withSocketsDo $ do
@@ -129,7 +125,7 @@ initSession = do
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
   return $ SessionState queue [] zInflate zDeflate 1 2
 
-frameHandler :: ResourceIO m => FrameHandler m
+frameHandler :: FrameHandler IO
 frameHandler state frame = do
   liftIO $ print frame
   case frame of
@@ -150,10 +146,10 @@ enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
     q <- readTVar queue
     writeTVar queue (q ++ [frame])
 
-createStream :: ResourceIO m => SessionState -> Word32 -> Word8 -> S.ByteString -> ResourceT m SessionState
+createStream :: SessionState -> Word32 -> Word8 -> S.ByteString -> ResourceT IO SessionState
 createStream state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) sId pri nvhBytes = do
   liftIO $ putStrLn $ "Creating stream context, id = " ++ show sId
-  nvhChunks <- liftIO $ do a <- withInflateInput zInflate nvhBytes popper
+  nvhChunks <- liftIO $ do a <- popper =<< feedInflate zInflate nvhBytes
                            b <- flushInflate zInflate
                            return (a++[b])
   let streamState = StreamState sId pri
@@ -178,11 +174,11 @@ onSynStreamFrame state sId pri nvh = do
   enqueueFrame state $ do
     let nvh' = List.sort $ map utf8 [ ("status","200 OK"),("version", "HTTP/1.1"), ("content-type", "text/html; charset=UTF-8"),("date", "Mon, 23 May 2005 22:38:34 GMT"),("server", "Apache/1.3.3.7 (Unix) (Red-Hat/Linux)")]
         nvhChunks = runPut (runBitPut (putNVHBlock nvh'))
-    str <- withDeflateInput (sessionStateNVHSendZContext state) (S.concat $ L.toChunks nvhChunks) popper
-    fl <- flushDeflate (sessionStateNVHSendZContext state) popper
+    str <- popper =<< feedDeflate (sessionStateNVHSendZContext state) (S.concat $ L.toChunks nvhChunks)
+    fl <- popper (flushDeflate (sessionStateNVHSendZContext state))
     let nvhReply = S.concat (str ++ fl)
     putStrLn "Constructed frame:"
-    print ("syn_reply", sId, nvh')
+    print ("syn_reply"::String, sId, nvh')
     return (SynReplyControlFrame 0 sId nvhReply) :: IO Frame
   enqueueFrame state $ return $ DataFrame 1 sId $ S.concat ("<html><h1>hello from spdy</h1><br/>" : S.concat ([ C8.pack (show b ++ "<br/>") | b <- nvh ]) : "</html>" : [])
   where
@@ -209,7 +205,7 @@ sender tlsctx queue = go
              return (frame, len-1)
         [] -> retry
 
-sessionHandler :: ResourceIO m => FrameHandler m -> TLSCtx Handle -> SockAddr -> ResourceT m ()
+sessionHandler :: FrameHandler IO -> TLSCtx Handle -> SockAddr -> ResourceT IO ()
 sessionHandler handler tlsctx sockaddr = do
   init <- liftIO $ initSession
   liftIO $ forkIO $ sender tlsctx (sessionStateSendQueue init)
