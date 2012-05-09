@@ -41,3 +41,19 @@ executable app
                  unordered-containers >= 0.2.1.0
 
   ghc-options: -threaded -Wall
+
+test-suite qc
+  type: exitcode-stdio-1.0
+  main-is: tests/QC.hs
+
+  build-depends: QuickCheck>=2, random,
+                 test-framework,
+                 test-framework-quickcheck2, 
+
+                 base, binary >= 0.5.2.0, binary-bits, network, text,
+                 bytestring, stm >= 2.3, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
+                 crypto-api, certificate, wai, http-types, vault,
+                 blaze-builder, case-insensitive,
+                 wai-app-static, warp, attoparsec,
+                 unordered-containers >= 0.2.1.0,
+                 scotty
