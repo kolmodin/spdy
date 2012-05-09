@@ -13,6 +13,9 @@ import Control.Concurrent ( forkIO )
 
 import Data.CaseInsensitive ( mk )
 
+import Data.Monoid
+import Web.Scotty
+
 app :: Application
 app _ = do
   liftIO $ putStrLn "I've done some IO here"
@@ -24,6 +27,17 @@ app _ = do
 app2 :: Application
 app2 = staticApp defaultFileServerSettings
 
+form :: IO Application
+form = scottyApp $ do
+  get "/:word" $ do
+    beam <- param "word"
+    html $ mconcat ["<h1>Scotty, ", beam, " me up!</h1>"]
+    html $ mconcat ["<form name=\"input\" action=\"form\" method=\"post\"> First name: <input type=\"text\" name=\"firstname\" /><br /> Last name: <input type=\"text\" name=\"lastname\" /> <input type=\"submit\" value=\"Submit\" /></form>"]
+  post "/form" $ do
+    fname <- param "firstname"
+    lname <- param "lastname"
+    html $ mconcat ["Hello ", fname, " ", lname]
+
 main :: IO ()
 main = do
   args <- getArgs
@@ -31,7 +45,8 @@ main = do
     [portS] -> return portS
     [] -> return "2000"
   putStrLn $ "http://localhost:" ++ port
-  mergedRun port app2
+  app <- form
+  mergedRun port app
 
 
 mergedRun port app = do
