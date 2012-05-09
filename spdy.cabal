@@ -23,7 +23,7 @@ executable spdy
   build-depends: spdy,
                  base, bytestring,
                  case-insensitive, wai-app-static, transformers, warp,
-                 http-types, wai
+                 http-types, wai, scotty
   ghc-options: -threaded -Wall
 
 library
@@ -34,7 +34,7 @@ library
     Network.SPDY.Frame,
     Network.SPDY.Utils
 
-  build-depends: base, bytestring, network, text, stm,
+  build-depends: base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.6.0.0, binary-bits, attoparsec,
                  conduit == 0.4.*, zlib-bindings == 0.1.*,
                  tls == 0.9.*, tls-extra, pem, crypto-api, certificate,
