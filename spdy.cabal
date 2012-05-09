@@ -33,9 +33,11 @@ executable app
     Network.SPDY.Utils
 
   build-depends: base, binary >= 0.5.2.0, binary-bits, network, text,
-                 bytestring, stm, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
+                 bytestring, stm >= 2.3, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
                  crypto-api, certificate, wai, http-types, vault,
                  blaze-builder, case-insensitive,
-                 wai-app-static, warp, attoparsec, unordered-containers
+                 wai-app-static, warp,
+                 scotty, spdy, attoparsec,
+                 unordered-containers >= 0.2.1.0
 
   ghc-options: -threaded -Wall
