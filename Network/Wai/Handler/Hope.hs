@@ -20,7 +20,7 @@ import Control.Monad.IO.Class (liftIO)
 
 import Network.SPDY.Frame
 
-import qualified Data.ByteString.Char8 as C8 ( pack ) -- Also IsString instance
+import qualified Data.ByteString.Char8 as C8 ( pack )
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Lazy as L
 
@@ -37,6 +37,7 @@ import Control.Monad ( when )
 
 import Control.Exception ( Exception, throwIO, Handler(..), catches )
 import Data.Typeable
+import Data.Either ( rights )
 
 import Codec.Zlib
 import Data.Text.Encoding ( encodeUtf8, decodeUtf8 )
@@ -57,7 +58,7 @@ import qualified Data.Attoparsec as A
 import qualified Data.Attoparsec.Char8 as A
 
 import qualified Data.Certificate.X509 as X509
-import qualified Data.Certificate.PEM as PEM
+import qualified Data.PEM as PEM
 import qualified Data.Certificate.KeyRSA as KeyRSA
 
 import Data.HashMap.Strict ( HashMap )
@@ -67,26 +68,24 @@ import Prelude hiding ( catch )
 
 readCertificate :: FilePath -> IO X509.X509
 readCertificate filepath = do
-    content <- S.readFile filepath
-    certdata <-
-        case PEM.parsePEMCert content of
-            Nothing -> error "no valid certificate section"
-            Just x  -> return x
-    case X509.decodeCertificate $ L.fromChunks [certdata] of
-        Left err -> error ("cannot decode certificate: " ++ err)
-        Right x  -> return x
+    certs <- rights . parseCerts . PEM.pemParseBS <$> S.readFile filepath
+    case certs of
+        []    -> error "no valid certificate found"
+        (x:_) -> return x
+    where parseCerts (Right pems) = map (X509.decodeCertificate . L.fromChunks . (:[]) . PEM.pemContent)
+                                  $ filter (flip elem ["CERTIFICATE", "TRUSTED CERTIFICATE"] . PEM.pemName) pems
+          parseCerts (Left err) = error $ "cannot parse PEM file: " ++ err
 
 readPrivateKey :: FilePath -> IO TLS.PrivateKey
 readPrivateKey filepath = do
-    content <- S.readFile filepath
-    pkdata <-
-        case PEM.parsePEMKeyRSA content of
-            Nothing -> error "no valid RSA key section"
-            Just x  -> return (L.fromChunks [x])
-    case KeyRSA.decodePrivate pkdata of
-        Left err -> error ("cannot decode key: " ++ err)
-        Right (_pub, x)  -> return $ TLS.PrivRSA x
+    pk <- rights . parseKey . PEM.pemParseBS <$> S.readFile filepath
+    case pk of
+        []    -> error "no valid RSA key found"
+        (x:_) -> return x
 
+    where parseKey (Right pems) = map (fmap (TLS.PrivRSA . snd) . KeyRSA.decodePrivate . L.fromChunks . (:[]) . PEM.pemContent)
+                                $ filter ((== "RSA PRIVATE KEY") . PEM.pemName) pems
+          parseKey (Left err) = error $ "Cannot parse PEM file: " ++ err
 
 run :: String -> Application -> IO ()
 run port app = withSocketsDo $ do
@@ -268,14 +267,17 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
 
 inflateWithFlush :: Inflate -> S.ByteString -> IO [S.ByteString]
 inflateWithFlush zInflate bytes = do
-  a <- withInflateInput zInflate bytes popper
+  a <- unfoldM =<< feedInflate zInflate bytes
   b <- flushInflate zInflate
   return (a++[b])
 
+unfoldM :: Monad m => m (Maybe a) -> m [a]
+unfoldM ma = ma >>= maybe (return []) (\x -> unfoldM ma >>= return . (:) x)
+
 deflateWithFlush :: Deflate -> L.ByteString -> IO S.ByteString
 deflateWithFlush deflate lbs = do
-  str <- withDeflateInput deflate (S.concat $ L.toChunks lbs) popper
-  fl <- flushDeflate deflate popper
+  str <- unfoldM =<< feedDeflate deflate (S.concat (L.toChunks lbs))
+  fl <- unfoldM (flushDeflate deflate)
   return (S.concat (str ++ fl))
 
 decodeNVH :: [S.ByteString] -> IO NameValueHeaderBlock
@@ -287,15 +289,6 @@ decodeNVH bytes = do
   where
   feedAll r [] = r
   feedAll r (x:xs) = r `feed` x `feedAll` xs
-
-popper :: Monad m => m (Maybe a) -> m [a]
-popper io = go id
-  where
-  go front = do
-    mChunk <- io
-    case mChunk of
-      Nothing -> return (front [])
-      Just x -> go (front . (:) x)
 
 sendGoAway :: SessionState -> Word32 -> IO ()
 sendGoAway state sId = do
@@ -346,7 +339,7 @@ onSynStreamFrame app sockaddr state flags sId pri nvh = do
         return (StateProcessing ()))
       (\_ -> liftIO $ enqueueFrame state (Just sId) $ return $ DataFrame 1 sId "")
 
-buildReq :: SockAddr -> Source IO S.ByteString -> NameValueHeaderBlock -> Either String Request
+buildReq :: SockAddr -> Source (ResourceT IO) S.ByteString -> NameValueHeaderBlock -> Either String Request
 buildReq sockaddr bodySource nvh = do
   method <- case lookup (decodeUtf8 "method") nvh of
               Just m -> return m
@@ -397,12 +390,12 @@ buildReq sockaddr bodySource nvh = do
                                 A.endOfInput
                                 return $ HttpVersion x y)
 
-mkChanSource :: ResourceIO m => IO (Source m S.ByteString, Chan (Maybe S.ByteString))
+mkChanSource :: MonadResource m => IO (Source m S.ByteString, Chan (Maybe S.ByteString))
 mkChanSource = do
   chan <- newChan
   return (chan2source chan, chan)
 
-chan2source :: ResourceIO m => Chan (Maybe S.ByteString) -> Source m S.ByteString
+chan2source :: MonadResource m => Chan (Maybe S.ByteString) -> Source m S.ByteString
 chan2source chan =
   sourceIO
     (return ())

@@ -9,36 +9,38 @@ license:             BSD3
 license-file:        LICENSE
 author:              Lennart Kolmodin
 maintainer:          kolmodin@gmail.com
-copyright:           Lennart Kolmodin 2011,
+copyright:           Lennart Kolmodin 2011-2012,
                      Google Inc. 2012.
 category:            Network
 build-type:          Simple
 cabal-version:       >=1.8
 
 executable spdy
-  main-is:           main.hs
+  main-is:           app.hs
+  hs-source-dirs:    example
   other-modules:
-    Network.SPDY,
-    Network.SPDY.Frame,
-    Network.SPDY.Utils
 
-  build-depends: base, binary >= 0.5.2.0, binary-bits, network, text, bytestring, stm, conduit, zlib-bindings, transformers, tls, tls-extra, crypto-api, certificate
+  build-depends: spdy,
+                 base, bytestring,
+                 case-insensitive, wai-app-static, transformers, warp,
+                 http-types, wai
   ghc-options: -threaded -Wall
 
-executable app
-  main-is:           app.hs
+library
+  exposed-modules:
+    Network.Wai.Handler.Hope
+    -- Network.SPDY
   other-modules:
-    Network.SPDY,
     Network.SPDY.Frame,
     Network.SPDY.Utils
 
-  build-depends: base, binary >= 0.5.2.0, binary-bits, network, text,
-                 bytestring, stm >= 2.3, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
-                 crypto-api, certificate, wai, http-types, vault,
+  build-depends: base, bytestring, network, text, stm,
+                 binary >= 0.6.0.0, binary-bits, attoparsec,
+                 conduit == 0.4.*, zlib-bindings == 0.1.*,
+                 tls == 0.9.*, tls-extra, pem, crypto-api, certificate,
+                 wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
-                 wai-app-static, warp,
-                 scotty, spdy, attoparsec,
-                 unordered-containers >= 0.2.1.0
+                 unordered-containers
 
   ghc-options: -threaded -Wall
 
