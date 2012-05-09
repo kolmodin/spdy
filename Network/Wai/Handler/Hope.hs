@@ -147,12 +147,12 @@ data Connection = Connection
   }
 
 data SessionState = SessionState
-  { sessionStateSendQueue :: TVar [IO Frame]  -- TODO(kolmodin): use a priority queue
+  { sessionStateSendQueue :: TVar [(Maybe Word32, IO Frame)]  -- TODO(kolmodin): use a priority queue
   , sessionStateStreamStates :: HashMap Word32 StreamState
   , sessionStateNVHReceiveZContext :: Inflate
   , sessionStateNVHSendZContext :: Deflate
-  , sessionStateLastValidSendID :: Word32
-  , sessionStateLastValidReceiveID :: Word32
+  , sessionStateLastValidSendID :: TVar Word32
+  , sessionStateLastValidReceiveID :: TVar Word32
   }
 
 data StreamState = StreamState
@@ -165,6 +165,8 @@ data StreamState = StreamState
 data SPDYException
   = SPDYParseException String
   | SPDYNVHException (Maybe Word32) String
+  | SPDYStreamError Word32 String
+  | SPDYSessionError String
   deriving (Show,Typeable)
 
 instance Exception SPDYException
@@ -172,21 +174,26 @@ instance Exception SPDYException
 initSession :: IO SessionState
 initSession = do
   queue <- newTVarIO []
+  sendID <- newTVarIO 0
+  receiveID <- newTVarIO 0
   zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
   zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
-  return $ SessionState queue Map.empty zInflate zDeflate 0 0
+  return $ SessionState queue Map.empty zInflate zDeflate sendID receiveID
 
 frameHandler :: Application -> SockAddr -> FrameHandler
 frameHandler app sockaddr state frame = do
   print frame
   case frame of
     SynStreamControlFrame flags sId assId pri nvh -> do
+      -- checkAndSetLastValidReceiveId (sessionStateLastValidReceiveID state) sId
       state' <- createStream app sockaddr state flags sId pri nvh
-      return state' { sessionStateLastValidReceiveID = sId }
+      return state'
     RstStreamControlFrame flags sId status -> do
       putStrLn "RstStream... we're screwed."
-      -- TODO: remove all knowledge of this stream. empty send buffer.
-      return state
+      case getStreamState state sId of
+        Nothing -> return ()
+        Just st -> killThread (streamStateReplyThread st)
+      resetFrame state sId
     DataFrame flags sId payload -> do
       let flag_fin = testBit flags 0
       case getStreamState state sId of
@@ -205,7 +212,7 @@ frameHandler app sockaddr state frame = do
                                 state' = updateStreamState state s'
                             return state'
     PingControlFrame pingId -> do
-      enqueueFrame state $ return (PingControlFrame pingId)
+      enqueueFrame state Nothing $ return (PingControlFrame pingId)
       return state
     SettingsFrame flags values -> do
       return state
@@ -213,6 +220,23 @@ frameHandler app sockaddr state frame = do
       return state
     NoopControlFrame -> do
       return state
+
+resetFrame :: SessionState -> Word32 -> IO SessionState
+resetFrame state rstStreamId = do
+  let sendQVar = sessionStateSendQueue state
+      streamStateMap = sessionStateStreamStates state
+      streamStateMap' = Map.delete rstStreamId streamStateMap
+  atomically $
+    modifyTVar sendQVar (\lst -> [ (sId,frame) | (sId, frame) <- lst, sId /= Just rstStreamId ])
+  return state { sessionStateStreamStates = streamStateMap' }
+
+checkAndSetLastValidReceiveId :: Word32 -> Word32 -> Maybe SPDYException
+checkAndSetLastValidReceiveId lastValidId newStreamId
+  | not (odd newStreamId) =
+      Just (SPDYStreamError newStreamId "New StreamID from client is not odd")
+  | newStreamId <= lastValidId =
+      Just (SPDYSessionError "New StreamID less or equal to last valid StreamID")
+  | otherwise = Nothing
 
 getStreamState :: SessionState -> Word32 -> Maybe StreamState
 getStreamState state sId = Map.lookup sId (sessionStateStreamStates state)
@@ -227,11 +251,11 @@ insertStreamState state stream =
   let streamStates = sessionStateStreamStates state
   in state { sessionStateStreamStates = Map.insert (streamStateID stream) stream streamStates }
 
-enqueueFrame :: SessionState -> IO Frame -> IO ()
-enqueueFrame SessionState { sessionStateSendQueue = queue } frame =
+enqueueFrame :: SessionState -> Maybe Word32 -> IO Frame -> IO ()
+enqueueFrame SessionState { sessionStateSendQueue = queue } sId frame =
   atomically $ do
     q <- readTVar queue
-    writeTVar queue (q ++ [frame])
+    writeTVar queue (q ++ [(sId, frame)])
 
 createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> S.ByteString -> IO SessionState
 createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) flags sId pri nvhBytes = do
@@ -275,11 +299,13 @@ popper io = go id
 
 sendGoAway :: SessionState -> Word32 -> IO ()
 sendGoAway state sId = do
-  enqueueFrame state $ return $ GoAwayFrame 0 sId
+  enqueueFrame state Nothing $ return $ GoAwayFrame 0 sId
 
 sendRstStream :: SessionState -> Word32 -> Word32 -> IO ()
 sendRstStream state sId status = do
-  enqueueFrame state $ return $ RstStreamControlFrame 0 sId status
+  enqueueFrame state (Just sId) $ return $ RstStreamControlFrame 0 sId status
+  -- TODO: should we really pass sId and allow the rst frame to be removed
+  -- from send queue?
 
 onSynStreamFrame :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> NameValueHeaderBlock -> IO (ThreadId, Maybe (Chan (Maybe S.ByteString)))
 onSynStreamFrame app sockaddr state flags sId pri nvh = do
@@ -297,7 +323,7 @@ onSynStreamFrame app sockaddr state flags sId pri nvh = do
         headerVersion = ("version", "HTTP/1.1")
         headerServer = ("server", "Hope/0.0.0.0")
         appHeaders = [ (CA.foldedCase h, k) | (h,k) <- responseHeaders ]
-    liftIO $ enqueueFrame state $ do
+    liftIO $ enqueueFrame state (Just sId) $ do
       let nvh' = List.sort $ map utf8 $ [headerStatus, headerVersion, headerServer] ++ appHeaders
       nvhReply <- deflateWithFlush (sessionStateNVHSendZContext state)
                                    (runPut (runBitPut (putNVHBlock nvh')))
@@ -315,10 +341,10 @@ onSynStreamFrame app sockaddr state flags sId pri nvh = do
       ()
       (\_ input -> do
         case input of
-          (Chunk inpBuilder) -> liftIO $ enqueueFrame state $ return $ mkDataFrame (toByteString inpBuilder)
+          (Chunk inpBuilder) -> liftIO $ enqueueFrame state (Just sId) $ return $ mkDataFrame (toByteString inpBuilder)
           Flush -> return ()
         return (StateProcessing ()))
-      (\_ -> liftIO $ enqueueFrame state $ return $ DataFrame 1 sId "")
+      (\_ -> liftIO $ enqueueFrame state (Just sId) $ return $ DataFrame 1 sId "")
 
 buildReq :: SockAddr -> Source IO S.ByteString -> NameValueHeaderBlock -> Either String Request
 buildReq sockaddr bodySource nvh = do
@@ -386,7 +412,7 @@ chan2source chan =
                 Nothing -> return IOClosed
                 Just bs -> return (IOOpen bs))
 
-sender :: Connection -> TVar [IO Frame] -> IO ()
+sender :: Connection -> TVar [(Maybe Word32, IO Frame)] -> IO ()
 sender conn queue = go
   where
   go = do
@@ -402,7 +428,7 @@ sender conn queue = go
       q <- readTVar queue
       let len = length q
       case q of
-        (frame:rest) ->
+        ((_,frame):rest) ->
           do writeTVar queue rest
              return (frame, len-1)
         [] -> retry
@@ -419,8 +445,13 @@ sessionHandler handler conn sockaddr = do
                      SPDYNVHException (Just sId) str -> do putStrLn ("Caught this! " ++ show e)
                                                            sendRstStream initS sId 1
                      SPDYNVHException Nothing    str -> do putStrLn ("Caught this! " ++ show e)
-                                                           sendGoAway initS 0)
-              , Handler (\e -> 
+                                                           sendGoAway initS 0
+                     SPDYSessionError str -> do putStrLn ("Ran into this: " ++ str)
+                                                sendGoAway initS 0 -- protocol error
+                     SPDYStreamError sId str -> do putStrLn ("Ran into this: " ++ str)
+                                                   sendGoAway initS sId -- protocol error
+                     )
+              , Handler (\e ->
                    case e of
                      ZlibException n -> do putStrLn ("Caught this! " ++ show e)
                                            sendGoAway initS 0)
