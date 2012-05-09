@@ -50,12 +50,28 @@ test-suite qc
 
   build-depends: QuickCheck>=2, random,
                  test-framework,
-                 test-framework-quickcheck2, 
-
-                 base, binary >= 0.5.2.0, binary-bits, network, text,
-                 bytestring, stm >= 2.3, conduit, zlib-bindings, transformers, tls == 0.9.*, tls-extra,
-                 crypto-api, certificate, wai, http-types, vault,
+                 test-framework-quickcheck2,
+                 
+                 base, bytestring, network, text, stm >= 2.3,
+                 binary >= 0.6.0.0, binary-bits, attoparsec,
+                 conduit == 0.4.*, zlib-bindings == 0.1.*,
+                 tls == 0.9.*, tls-extra, pem, crypto-api, certificate,
+                 wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
-                 wai-app-static, warp, attoparsec,
-                 unordered-containers >= 0.2.1.0,
-                 scotty
+                 unordered-containers
+
+test-suite server-roundtrip
+  type: exitcode-stdio-1.0
+  main-is: tests/Server.hs
+
+  build-depends: QuickCheck>=2, random,
+                 test-framework,
+                 test-framework-quickcheck2,
+                 
+                 base, bytestring, network, text, stm >= 2.3,
+                 binary >= 0.6.0.0, binary-bits, attoparsec,
+                 conduit == 0.4.*, zlib-bindings == 0.1.*,
+                 tls == 0.9.*, tls-extra, pem, crypto-api, certificate,
+                 wai, http-types, vault, transformers,
+                 blaze-builder, case-insensitive,
+                 unordered-containers
