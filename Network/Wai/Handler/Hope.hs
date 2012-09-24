@@ -282,13 +282,13 @@ deflateWithFlush deflate lbs = do
 
 decodeNVH :: [S.ByteString] -> IO NameValueHeaderBlock
 decodeNVH bytes = do
-  case eof $ runGetPartial (runBitGet getNVHBlock) `feedAll` bytes of
+  case pushEndOfInput $ runGetIncremental (runBitGet getNVHBlock) `feedAll` bytes of
     Done _ _ nvh -> return nvh
     Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
     Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
   where
   feedAll r [] = r
-  feedAll r (x:xs) = r `feed` x `feedAll` xs
+  feedAll r (x:xs) = r `pushChunk` x `feedAll` xs
 
 sendGoAway :: SessionState -> Word32 -> IO ()
 sendGoAway state sId = do
@@ -430,7 +430,7 @@ sessionHandler :: FrameHandler -> Connection -> SockAddr -> IO ()
 sessionHandler handler conn sockaddr = do
   initS <- initSession
   _ <- forkIO $ sender conn (sessionStateSendQueue initS)
-  go initS (runGetPartial (runBitGet getFrame))
+  go initS (runGetIncremental (runBitGet getFrame))
     `catches` [ Handler (\e ->
                    case e of
                      SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
@@ -448,7 +448,7 @@ sessionHandler handler conn sockaddr = do
                    case e of
                      ZlibException n -> do putStrLn ("Caught this! " ++ show e)
                                            sendGoAway initS 0)
-              ] 
+              ]
   where
   go s r =
     case r of
@@ -460,4 +460,4 @@ sessionHandler handler conn sockaddr = do
       Done rest _pos frame -> do
         putStrLn "Parsed frame."
         s' <- handler s frame
-        go s' (runGetPartial (runBitGet getFrame) `feed` rest)
+        go s' (runGetIncremental (runBitGet getFrame) `pushChunk` rest)
