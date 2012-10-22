@@ -106,7 +106,7 @@ run port app = withSocketsDo $ do
         _ <- forkIO $ do
           handle <- socketToHandle sock ReadWriteMode
           cryptoR <- newGenIO :: IO SystemRandom
-          tlsctx <- TLS.server (myParams cert pk) cryptoR handle
+          tlsctx <- TLS.contextNewOnHandle handle (myParams cert pk) cryptoR
           TLS.handshake tlsctx
           proto <- TLS.getNegotiatedProtocol tlsctx
           let conn = Connection { connSend = TLS.sendData tlsctx
@@ -122,8 +122,8 @@ run port app = withSocketsDo $ do
 
   where
   myParams cert pk =
-    TLS.defaultParams
-      { TLS.pAllowedVersions = TLS.SSL3 : TLS.pAllowedVersions TLS.defaultParams
+    TLS.defaultParamsServer
+      { TLS.pAllowedVersions = TLS.SSL3 : TLS.pAllowedVersions TLS.defaultParamsServer
       , TLS.pCiphers = TLSE.ciphersuite_all
       , TLS.pCertificates    = [(cert, Just pk)]
       , TLS.onSuggestNextProtocols = return $ Just [ "spdy/2" ]
