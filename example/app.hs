@@ -24,9 +24,6 @@ app _ = do
     [("Content-Type", "text/plain")]
     "Hello, Web!"
 
-app2 :: Application
-app2 = staticApp defaultFileServerSettings
-
 form :: IO Application
 form = scottyApp $ do
   get "/:word" $ do

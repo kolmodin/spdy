@@ -16,6 +16,7 @@ import Data.Binary.Bits.Get
 import Data.Binary.Bits.Put
 
 import Data.Conduit hiding (Done)
+import Data.Conduit.Util
 import Control.Monad.IO.Class (liftIO)
 
 import Network.SPDY.Frame
