@@ -65,7 +65,7 @@ instance Arbitrary Text where
 
 -- Utilities.
 
-roundtrip :: Eq a => (a -> b) -> (b -> Result a) -> a -> Property
+roundtrip :: Eq a => (a -> b) -> (b -> Decoder a) -> a -> Property
 roundtrip writer reader x = property $
   let result = reader (writer x)
   in case result of
@@ -77,7 +77,7 @@ roundtrip_binary :: Eq a => (a -> Put) -> Get a -> a -> Property
 roundtrip_binary writer reader =
   roundtrip
     (L.toChunks . runPut . writer)
-    (\bss -> eof $ runGetPartial reader `feed` S.concat bss)
+    (\bss -> pushEndOfInput $ runGetIncremental reader `pushChunk` S.concat bss)
 
 roundtrip_bit :: Eq a => (a -> BitPut ()) -> BitGet a -> a -> Property
 roundtrip_bit writer reader =

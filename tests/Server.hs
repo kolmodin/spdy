@@ -56,7 +56,7 @@ prop_start = within (milliseconds 100) $ monadicIO $ do
     PingControlFrame 0 -> return ()
     _ -> error "dafaq"
 
-get conn pushback = go (runGetPartial (runBitGet getFrame))
+get conn pushback = go (runGetIncremental (runBitGet getFrame))
   where
   go r = do
    case r of
