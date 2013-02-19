@@ -53,7 +53,7 @@ import qualified Data.CaseInsensitive as CA ( foldedCase, mk )
 import Network.TLS ( TLSCtx )
 import qualified Network.TLS as TLS
 import qualified Network.TLS.Extra as TLSE
-import Crypto.Random ( newGenIO, SystemRandom )
+import Crypto.Random.API ( getSystemRandomGen )
 
 import qualified Data.Attoparsec as A
 import qualified Data.Attoparsec.Char8 as A
@@ -106,8 +106,9 @@ run port app = withSocketsDo $ do
         (sock, sockaddr) <- accept sock
         _ <- forkIO $ do
           handle <- socketToHandle sock ReadWriteMode
-          cryptoR <- newGenIO :: IO SystemRandom
-          tlsctx <- TLS.contextNewOnHandle handle (myParams cert pk) cryptoR
+          -- cryptoR <- newGenIO :: IO SystemRandom
+          systemRandom <- getSystemRandomGen
+          tlsctx <- TLS.contextNewOnHandle handle (myParams cert pk) systemRandom
           TLS.handshake tlsctx
           proto <- TLS.getNegotiatedProtocol tlsctx
           let conn = Connection { connSend = TLS.sendData tlsctx

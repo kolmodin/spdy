@@ -37,7 +37,7 @@ library
   build-depends: base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.6.0.0, binary-bits, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
-                 tls >= 1.0.0, tls-extra, pem, crypto-api, certificate,
+                 tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
                  unordered-containers
@@ -55,7 +55,7 @@ test-suite qc
                  base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.6.0.0, binary-bits, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
-                 tls >= 1.0.0, tls-extra, pem, crypto-api, certificate,
+                 tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
                  unordered-containers
@@ -71,7 +71,7 @@ test-suite server-roundtrip
                  base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.6.0.0, binary-bits, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
-                 tls >= 1.0.0, tls-extra, pem, crypto-api, certificate,
+                 tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
                  unordered-containers
