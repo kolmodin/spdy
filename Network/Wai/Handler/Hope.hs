@@ -27,6 +27,9 @@ import qualified Data.ByteString.Lazy as L
 
 import Data.Bits
 
+import qualified Data.List
+import Data.Ord ( comparing )
+
 import Network.Socket hiding ( recv, Closed )
 
 import Control.Applicative
@@ -139,47 +142,43 @@ runWithConnection :: SockAddr -> Connection -> Application -> IO ()
 runWithConnection sockaddr conn app =
   sessionHandler (frameHandler app sockaddr) conn sockaddr
 
+sessionHandler :: FrameHandler -> Connection -> SockAddr -> IO ()
+sessionHandler handler conn sockaddr = do
+  initS <- initSession
+  _ <- forkIO $ sender conn (sessionStateSendQueue initS)
+  go initS (runGetIncremental (runBitGet getFrame))
+    `catches` [ Handler (\e ->
+                   case e of
+                     SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
+                                                  sendGoAway initS 0
+                     SPDYNVHException (Just sId) str -> do putStrLn ("Caught this! " ++ show e)
+                                                           sendRstStream initS sId 1
+                     SPDYNVHException Nothing    str -> do putStrLn ("Caught this! " ++ show e)
+                                                           sendGoAway initS 0
+                     SPDYSessionError str -> do putStrLn ("Ran into this: " ++ str)
+                                                sendGoAway initS 0 -- protocol error
+                     SPDYStreamError sId str -> do putStrLn ("Ran into this: " ++ str)
+                                                   sendGoAway initS sId -- protocol error
+                     )
+              , Handler (\e ->
+                   case e of
+                     ZlibException n -> do putStrLn ("Caught this! " ++ show e)
+                                           sendGoAway initS 0)
+              ]
+  where
+  go s r =
+    case r of
+      Fail _ _ msg -> throwIO (SPDYParseException msg)
+      Partial f -> do
+        raw <- connReceive conn
+        putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network")
+        go s (f $ Just raw)
+      Done rest _pos frame -> do
+        putStrLn "Parsed frame."
+        s' <- handler s frame
+        go s' (runGetIncremental (runBitGet getFrame) `pushChunk` rest)
+
 type FrameHandler = SessionState -> Frame -> IO SessionState
-
-data Connection = Connection
-  { connSend :: L.ByteString -> IO ()
-  , connClose :: IO ()
-  , connReceive :: IO S.ByteString
-  }
-
-data SessionState = SessionState
-  { sessionStateSendQueue :: TVar [(Maybe Word32, IO Frame)]  -- TODO(kolmodin): use a priority queue
-  , sessionStateStreamStates :: HashMap Word32 StreamState
-  , sessionStateNVHReceiveZContext :: Inflate
-  , sessionStateNVHSendZContext :: Deflate
-  , sessionStateLastValidSendID :: TVar Word32
-  , sessionStateLastValidReceiveID :: TVar Word32
-  }
-
-data StreamState = StreamState
-  { streamStateID :: Word32
-  , streamStatePriority :: Word8
-  , streamStateReplyThread :: ThreadId
-  , streamStateBodyChan :: Maybe (Chan (Maybe S.ByteString))
-  }
-
-data SPDYException
-  = SPDYParseException String
-  | SPDYNVHException (Maybe Word32) String
-  | SPDYStreamError Word32 String
-  | SPDYSessionError String
-  deriving (Show,Typeable)
-
-instance Exception SPDYException
-
-initSession :: IO SessionState
-initSession = do
-  queue <- newTVarIO []
-  sendID <- newTVarIO 0
-  receiveID <- newTVarIO 0
-  zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
-  zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
-  return $ SessionState queue Map.empty zInflate zDeflate sendID receiveID
 
 frameHandler :: Application -> SockAddr -> FrameHandler
 frameHandler app sockaddr state frame = do
@@ -222,13 +221,53 @@ frameHandler app sockaddr state frame = do
     NoopControlFrame -> do
       return state
 
+data Connection = Connection
+  { connSend :: L.ByteString -> IO ()
+  , connClose :: IO ()
+  , connReceive :: IO S.ByteString
+  }
+
+data SessionState = SessionState
+  { sessionStateSendQueue :: TVar [(Word8, Maybe Word32, IO Frame)]  -- TODO(kolmodin): use a priority queue
+  , sessionStateStreamStates :: HashMap Word32 StreamState
+  , sessionStateNVHReceiveZContext :: Inflate
+  , sessionStateNVHSendZContext :: Deflate
+  , sessionStateLastValidSendID :: TVar Word32
+  , sessionStateLastValidReceiveID :: TVar Word32
+  }
+
+data StreamState = StreamState
+  { streamStateID :: Word32
+  , streamStatePriority :: Word8
+  , streamStateReplyThread :: ThreadId
+  , streamStateBodyChan :: Maybe (Chan (Maybe S.ByteString))
+  }
+
+data SPDYException
+  = SPDYParseException String
+  | SPDYNVHException (Maybe Word32) String
+  | SPDYStreamError Word32 String
+  | SPDYSessionError String
+  deriving (Show,Typeable)
+
+instance Exception SPDYException
+
+initSession :: IO SessionState
+initSession = do
+  queue <- newTVarIO []
+  sendID <- newTVarIO 0
+  receiveID <- newTVarIO 0
+  zInflate <- liftIO $ initInflateWithDictionary defaultWindowBits nvhDictionary
+  zDeflate <- liftIO $ initDeflateWithDictionary 6 nvhDictionary defaultWindowBits
+  return $ SessionState queue Map.empty zInflate zDeflate sendID receiveID
+
 resetFrame :: SessionState -> Word32 -> IO SessionState
 resetFrame state rstStreamId = do
   let sendQVar = sessionStateSendQueue state
       streamStateMap = sessionStateStreamStates state
       streamStateMap' = Map.delete rstStreamId streamStateMap
   atomically $
-    modifyTVar sendQVar (\lst -> [ (sId,frame) | (sId, frame) <- lst, sId /= Just rstStreamId ])
+    modifyTVar sendQVar (\lst -> [ (pri, sId,frame) | (pri, sId, frame) <- lst, sId /= Just rstStreamId ])
   return state { sessionStateStreamStates = streamStateMap' }
 
 checkAndSetLastValidReceiveId :: Word32 -> Word32 -> Maybe SPDYException
@@ -253,10 +292,17 @@ insertStreamState state stream =
   in state { sessionStateStreamStates = Map.insert (streamStateID stream) stream streamStates }
 
 enqueueFrame :: SessionState -> Maybe Word32 -> IO Frame -> IO ()
-enqueueFrame SessionState { sessionStateSendQueue = queue } sId frame =
+enqueueFrame state@(SessionState { sessionStateSendQueue = queue
+                                 , sessionStateStreamStates = streamStates }) sId frame =
   atomically $ do
     q <- readTVar queue
-    writeTVar queue (q ++ [(sId, frame)])
+    writeTVar queue (Data.List.insertBy orderer (pri0, sId, frame) q)
+  where
+    pri0 = maybe 0 id $ do
+      sId_ <- sId
+      streamState <- Map.lookup sId_ streamStates
+      return (streamStatePriority streamState)
+    orderer = comparing (\(pri, sId, _) -> (-pri, sId))
 
 createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> S.ByteString -> IO SessionState
 createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) flags sId pri nvhBytes = do
@@ -407,7 +453,7 @@ chan2source chan =
                 Nothing -> return IOClosed
                 Just bs -> return (IOOpen bs))
 
-sender :: Connection -> TVar [(Maybe Word32, IO Frame)] -> IO ()
+sender :: Connection -> TVar [(Word8, Maybe Word32, IO Frame)] -> IO ()
 sender conn queue = go
   where
   go = do
@@ -423,43 +469,7 @@ sender conn queue = go
       q <- readTVar queue
       let len = length q
       case q of
-        ((_,frame):rest) ->
+        ((_, _,frame):rest) ->
           do writeTVar queue rest
              return (frame, len-1)
         [] -> retry
-
-sessionHandler :: FrameHandler -> Connection -> SockAddr -> IO ()
-sessionHandler handler conn sockaddr = do
-  initS <- initSession
-  _ <- forkIO $ sender conn (sessionStateSendQueue initS)
-  go initS (runGetIncremental (runBitGet getFrame))
-    `catches` [ Handler (\e ->
-                   case e of
-                     SPDYParseException str -> do putStrLn ("Caught this! " ++ show e)
-                                                  sendGoAway initS 0
-                     SPDYNVHException (Just sId) str -> do putStrLn ("Caught this! " ++ show e)
-                                                           sendRstStream initS sId 1
-                     SPDYNVHException Nothing    str -> do putStrLn ("Caught this! " ++ show e)
-                                                           sendGoAway initS 0
-                     SPDYSessionError str -> do putStrLn ("Ran into this: " ++ str)
-                                                sendGoAway initS 0 -- protocol error
-                     SPDYStreamError sId str -> do putStrLn ("Ran into this: " ++ str)
-                                                   sendGoAway initS sId -- protocol error
-                     )
-              , Handler (\e ->
-                   case e of
-                     ZlibException n -> do putStrLn ("Caught this! " ++ show e)
-                                           sendGoAway initS 0)
-              ]
-  where
-  go s r =
-    case r of
-      Fail _ _ msg -> throwIO (SPDYParseException msg)
-      Partial f -> do
-        raw <- connReceive conn
-        putStrLn ("Got " ++ show (S.length raw) ++ " bytes over the network")
-        go s (f $ Just raw)
-      Done rest _pos frame -> do
-        putStrLn "Parsed frame."
-        s' <- handler s frame
-        go s' (runGetIncremental (runBitGet getFrame) `pushChunk` rest)
