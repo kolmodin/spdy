@@ -27,7 +27,6 @@ import qualified Data.ByteString.Lazy as L
 
 import Data.Bits
 
-import qualified Data.List
 import Data.Ord ( comparing )
 
 import Network.Socket hiding ( recv, Closed )
@@ -296,12 +295,18 @@ enqueueFrame state@(SessionState { sessionStateSendQueue = queue
                                  , sessionStateStreamStates = streamStates }) sId frame =
   atomically $ do
     q <- readTVar queue
-    writeTVar queue (Data.List.insertBy orderer (pri0, sId, frame) q)
+    writeTVar queue (insertLastBy orderer (pri0, sId, frame) q)
   where
     pri0 = maybe 0 id $ do
       sId_ <- sId
       streamState <- Map.lookup sId_ streamStates
       return (streamStatePriority streamState)
+    insertLastBy :: (a -> a -> Ordering) -> a -> [a] -> [a]
+    insertLastBy _   x [] = [x]
+    insertLastBy cmp x ys@(y:ys')
+     = case cmp x y of
+         LT -> x : ys
+         _  -> y : insertLastBy cmp x ys'
     orderer = comparing (\(pri, sId, _) -> (-pri, sId))
 
 createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> S.ByteString -> IO SessionState
