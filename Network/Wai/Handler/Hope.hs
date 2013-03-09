@@ -15,7 +15,7 @@ import Data.Binary.Put
 import Data.Binary.Bits.Get
 import Data.Binary.Bits.Put
 
-import Data.Conduit hiding (Done)
+import Data.Conduit
 import Data.Conduit.Util
 import Control.Monad.IO.Class (liftIO)
 
@@ -52,7 +52,6 @@ import System.IO ( IOMode(ReadWriteMode), Handle )
 
 import qualified Data.CaseInsensitive as CA ( foldedCase, mk )
 
-import Network.TLS ( TLSCtx )
 import qualified Network.TLS as TLS
 import qualified Network.TLS.Extra as TLSE
 import Crypto.Random.API ( getSystemRandomGen )
@@ -67,7 +66,7 @@ import qualified Data.Certificate.KeyRSA as KeyRSA
 import Data.HashMap.Strict ( HashMap )
 import qualified Data.HashMap.Strict as Map
 
-import Prelude hiding ( catch )
+import Prelude
 
 readCertificate :: FilePath -> IO X509.X509
 readCertificate filepath = do
@@ -219,6 +218,8 @@ frameHandler app sockaddr state frame = do
       return state
     NoopControlFrame -> do
       return state
+    SynReplyControlFrame _ _ _ -> do
+      return state
 
 data Connection = Connection
   { connSend :: L.ByteString -> IO ()
@@ -281,12 +282,12 @@ getStreamState :: SessionState -> Word32 -> Maybe StreamState
 getStreamState state sId = Map.lookup sId (sessionStateStreamStates state)
 
 updateStreamState :: SessionState -> StreamState -> SessionState
-updateStreamState state stream = 
+updateStreamState state stream =
   let streamStates = sessionStateStreamStates state
   in state { sessionStateStreamStates = Map.adjust (const stream) (streamStateID stream) streamStates }
 
 insertStreamState :: SessionState -> StreamState -> SessionState
-insertStreamState state stream = 
+insertStreamState state stream =
   let streamStates = sessionStateStreamStates state
   in state { sessionStateStreamStates = Map.insert (streamStateID stream) stream streamStates }
 
@@ -309,7 +310,7 @@ enqueueFrame state@(SessionState { sessionStateSendQueue = queue
          _  -> y : insertLastBy cmp x ys'
     orderer = comparing (\(pri, sId, _) -> (-pri, sId))
 
-createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> S.ByteString -> IO SessionState
+createStream :: Application -> SockAddr -> SessionState -> Word8 -> Word32 -> Word8 -> L.ByteString -> IO SessionState
 createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext = zInflate }) flags sId pri nvhBytes = do
   putStrLn $ "Creating stream context, id = " ++ show sId
   nvh <- decodeNVH =<< inflateWithFlush zInflate nvhBytes
@@ -318,9 +319,10 @@ createStream app sockaddr state@(SessionState { sessionStateNVHReceiveZContext =
   let streamState = StreamState sId pri tId bodyChan
   return (insertStreamState state streamState)
 
-inflateWithFlush :: Inflate -> S.ByteString -> IO [S.ByteString]
+inflateWithFlush :: Inflate -> L.ByteString -> IO [S.ByteString]
 inflateWithFlush zInflate bytes = do
-  a <- unfoldM =<< feedInflate zInflate bytes
+  let bytes' = L.toStrict bytes
+  a <- unfoldM =<< feedInflate zInflate bytes'
   b <- flushInflate zInflate
   return (a++[b])
 
@@ -410,7 +412,7 @@ buildReq sockaddr bodySource nvh = do
   port <- case port' of
             Right (p,"") -> return p
             _            -> Left "invalid port in nvh field 'host'"
- 
+
   rawPath <- case lookup (decodeUtf8 "url") nvh of
                Just str -> return str
                Nothing -> Left "url parameter missing in nvh block"

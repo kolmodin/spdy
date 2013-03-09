@@ -35,7 +35,7 @@ data Frame
       synStreamFrameStreamID :: Word32,
       synStreamFrameAssociatedStreamID :: Word32,
       synStreamFramePriority :: Word8,
-      synStreamFrameNVHCompressed :: B.ByteString }
+      synStreamFrameNVHCompressed :: L.ByteString }
   | SynReplyControlFrame {
       controlFrameFlags :: Word8,
       synReplyFrameStreamID :: Word32,
@@ -137,7 +137,8 @@ getSynStream header = do
   let contentLength = fromIntegral (controlFrameLength header)
   unless (contentLength >= 11) $
     fail $ "SYN_STREAM: frame length too short, length = " ++ show contentLength
-  synStreamFrameNVHCompressed <- getByteString (contentLength - 10)
+  nvh <- getByteString (contentLength - 10)
+  let synStreamFrameNVHCompressed = L.fromStrict nvh
   return SynStreamControlFrame { .. }
 
 getSynReplyStream :: ControlFrameHeader -> BitGet Frame
@@ -244,7 +245,7 @@ putFrame frame = do
             putWord32be 31 synStreamFrameAssociatedStreamID
             putWord8 2 synStreamFramePriority
             putWord16be 14 0 -- ignored
-            putByteString synStreamFrameNVHCompressed
+            mapM_ putByteString (L.toChunks synStreamFrameNVHCompressed)
       putControlFrameHeader (mkControlHeader frame payload)
       mapM_ putByteString (L.toChunks payload)
 

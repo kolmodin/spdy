@@ -100,7 +100,7 @@ arbitrarySynStreamFrame = do
   sId <- arbitraryWord31be
   aId <- arbitraryWord31be
   pri <- arbitraryPriority
-  nvh <- genBS 2 200
+  nvh <- fmap L.fromStrict (genBS 2 200)
   return (SynStreamControlFrame flags sId aId pri nvh)
 
 arbitrarySynReplyStreamFrame :: Gen Frame
