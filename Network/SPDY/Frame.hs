@@ -197,10 +197,19 @@ getSettingsFrame header = do
 
 getSettingEntry :: BitGet (Word32, Word8, Word32)
 getSettingEntry = do
-  id_ <- getWord32be 24
+  id_ <- getWord32le24
   flags <- getWord8 8
   value <- getWord32be 32
   return (id_, flags, value)
+
+getWord32le24 :: BitGet Word32
+getWord32le24 = do
+  a <- getWord8 8
+  b <- getWord8 8
+  c <- getWord8 8
+  return ( (fromIntegral a) .|.
+           (fromIntegral b `shiftL` 8 ) .|.
+           (fromIntegral c `shiftL` 16))
 
 getNVHBlock :: BitGet NameValueHeaderBlock
 getNVHBlock = do
@@ -280,12 +289,21 @@ putFrame frame = do
       let payload = runPut $ runBitPut $ do
             mapM_ putValue settingsFrameValues
           putValue (id_, flags, value) = do
-            putWord32be 24 id_
+            putWord32le24 id_
             putWord8 8 flags
             putWord32be 32 value
       putControlFrameHeader (mkControlHeader frame payload)
       putWord32be 32 (fromIntegral $ length settingsFrameValues)
       mapM_ putByteString (L.toChunks payload)
+
+putWord32le24 :: Word32 -> BitPut ()
+putWord32le24 w = do
+  let w1 = fromIntegral w :: Word8
+      w2 = fromIntegral (w `shiftR` 8) :: Word8
+      w3 = fromIntegral (w `shiftR` 16) :: Word8
+  putWord8 8 w1
+  putWord8 8 w2
+  putWord8 8 w3
 
 mkControlHeaderWithLength :: Frame -> Word32 -> ControlFrameHeader
 mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
