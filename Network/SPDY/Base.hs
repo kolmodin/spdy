@@ -107,10 +107,10 @@ sender out queue = go
   where
   go = do
     (frameIO,len) <- getNextFrame
-    putStrLn "Sending frame..."
+    --putStrLn "Sending frame..."
     frame <- frameIO
-    print $ C8.pack $ ">>> " ++ show frame
-    putStrLn (show len ++ " more items in queue")
+    --print $ C8.pack $ ">>> " ++ show frame
+    --putStrLn (show len ++ " more items in queue")
     Streams.write (Just (runPut (runBitPut (putFrame frame)))) out
     go
   getNextFrame =
