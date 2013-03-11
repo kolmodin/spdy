@@ -1,54 +1,54 @@
-{-# LANGUAGE RecordWildCards, ForeignFunctionInterface, OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings        #-}
+{-# LANGUAGE RecordWildCards          #-}
+
 module Network.SPDY.Frame where
 
-import Data.Binary.Put ( runPut )
+import           Control.Applicative   ((<$>))
+import           Control.Monad         (unless)
+import           Control.Monad         (forM_, liftM2)
+import           Data.Binary.Put       (runPut)
+import           Data.Bits
+import qualified Data.ByteString       as B
+import           Data.ByteString.Char8 ()
+import qualified Data.ByteString.Lazy  as L
+import qualified Data.Text.Encoding    as Text
+import           Data.Word
 
-import Data.Text ( Text )
-import qualified Data.Text.Encoding as Text
+import           Data.Binary.Bits.Get
+import           Data.Binary.Bits.Put
+import           Data.Text             (Text)
 
-import Data.Binary.Bits.Get
-import Data.Binary.Bits.Put
-
-import Data.Word
-
-import Control.Monad ( unless )
-
-import Data.ByteString.Char8 () -- IsString instance
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as L
-
-import Control.Applicative ( (<$>) )
-import Control.Monad ( liftM2, forM_ )
 
 ourSPDYVersion :: Word16
 ourSPDYVersion = 2
 
 data Frame
   = DataFrame {
-      dataFrameFlags :: Word8,
+      dataFrameFlags    :: Word8,
       dataFrameStreamID :: Word32,
-      dataFramePayload :: B.ByteString }
+      dataFramePayload  :: B.ByteString }
   | SynStreamControlFrame {
-      controlFrameFlags :: Word8,
-      synStreamFrameStreamID :: Word32,
+      controlFrameFlags                :: Word8,
+      synStreamFrameStreamID           :: Word32,
       synStreamFrameAssociatedStreamID :: Word32,
-      synStreamFramePriority :: Word8,
-      synStreamFrameNVHCompressed :: L.ByteString }
+      synStreamFramePriority           :: Word8,
+      synStreamFrameNVHCompressed      :: L.ByteString }
   | SynReplyControlFrame {
-      controlFrameFlags :: Word8,
-      synReplyFrameStreamID :: Word32,
+      controlFrameFlags          :: Word8,
+      synReplyFrameStreamID      :: Word32,
       synReplyFrameNVHCompressed :: B.ByteString }
   | RstStreamControlFrame {
-      controlFrameFlags :: Word8,
-      rstStreamFrameStreamID :: Word32,
+      controlFrameFlags        :: Word8,
+      rstStreamFrameStreamID   :: Word32,
       rstStreamFrameStatusCode :: RstStreamStatusCode }
   | PingControlFrame {
       pingControlFrameId :: Word32 }
   | GoAwayFrame {
-      controlFrameFlags :: Word8,
+      controlFrameFlags      :: Word8,
       goAwayLastGoodStreamID :: Word32 }
   | SettingsFrame {
-      controlFrameFlags :: Word8,
+      controlFrameFlags   :: Word8,
       settingsFrameValues :: [(Word32, Word8, Word32)] }
   | NoopControlFrame
   deriving (Show, Eq)
@@ -56,9 +56,9 @@ data Frame
 data ControlFrameHeader =
   ControlFrameHeader {
     controlFrameVersion :: Word16,
-    controlFrameType :: Word16,
-    controlFrameFlags_ :: Word8,
-    controlFrameLength :: Word32
+    controlFrameType    :: Word16,
+    controlFrameFlags_  :: Word8,
+    controlFrameLength  :: Word32
   } deriving (Show, Eq)
 
 type RstStreamStatusCode = Word32
@@ -194,7 +194,7 @@ getSettingsFrame header = do
   entries <- getWord32be 32
   settingsFrameValues <- sequence $ replicate (fromIntegral entries) getSettingEntry
   return $ SettingsFrame { .. }
-  
+
 getSettingEntry :: BitGet (Word32, Word8, Word32)
 getSettingEntry = do
   id_ <- getWord32be 24
