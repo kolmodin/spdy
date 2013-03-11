@@ -20,8 +20,6 @@ import qualified Data.ByteString.Lazy as L
 import Control.Applicative ( (<$>) )
 import Control.Monad ( liftM2, forM_ )
 
-type StreamID = Word32
-
 ourSPDYVersion :: Word16
 ourSPDYVersion = 2
 
@@ -77,7 +75,12 @@ data RstStreamStatusCode
   | STREAM_ALREADY_CLOSED -- ^ The endpoint received a data or SYN_REPLY frame for a stream which is half closed.
   -}
 
+type StreamID = Word32
+type Priority = Word8
+type Flags = Word8
 type NameValueHeaderBlock = [(Text,Text)]
+type NVH = NameValueHeaderBlock
+
 
 -- ** Get stuff
 
