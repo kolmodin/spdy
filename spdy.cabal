@@ -23,7 +23,7 @@ executable spdy
   build-depends: spdy,
                  base, bytestring,
                  case-insensitive, wai-app-static, transformers, warp,
-                 http-types, wai, scotty
+                 http-types, wai, scotty, io-streams
   ghc-options: -threaded -Wall
 
 library
@@ -32,7 +32,11 @@ library
     -- Network.SPDY
   other-modules:
     Network.SPDY.Frame,
-    Network.SPDY.Utils
+    Network.SPDY.Utils,
+    Network.SPDY.Base,
+    Network.SPDY.Binary,
+    Network.SPDY.TLS,
+    Network.SPDY.Connection
 
   build-depends: base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.7.0.0, binary-bits, attoparsec,
@@ -40,7 +44,7 @@ library
                  tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
-                 unordered-containers
+                 unordered-containers, io-streams, cprng-aes
 
   ghc-options: -threaded -Wall
 
