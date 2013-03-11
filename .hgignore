@@ -1,4 +1,7 @@
 .cabal-sandbox/
 dist/
-glob:*.o
-glob:*.hi
+syntax: glob
+*.o
+*.hi
+cabal.sandbox.config
+*.sublime-*
