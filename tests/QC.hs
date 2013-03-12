@@ -36,6 +36,7 @@ allTests =
           , testProperty "Rst Stream Frame" (arbitraryRstStreamFrame      >>= prop_roundtrip_frame)
           , testProperty "Go Away Frame"    (arbitraryGoAwayFrame         >>= prop_roundtrip_frame)
           , testProperty "Settings Frame"   (arbitrarySettingsFrame       >>= prop_roundtrip_frame)
+          , testProperty "Noop Frame"       (arbitraryNoopFrame           >>= prop_roundtrip_frame)
           ]
       ]
   ]
@@ -127,6 +128,9 @@ arbitrarySettingsFrame = do
   flags <- arbitrary
   values <- listOf arbitrarySettingValue
   return (SettingsFrame flags values)
+
+arbitraryNoopFrame :: Gen Frame
+arbitraryNoopFrame = return NoopControlFrame
 
 --
 

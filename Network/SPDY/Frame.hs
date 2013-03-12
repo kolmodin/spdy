@@ -122,7 +122,7 @@ getControlFrameBody header =
     2 -> getSynReplyStream header
     3 -> getRstStream header
     4 -> getSettingsFrame header
-    5 -> fail "Received NOOP frame. Not implemented."
+    5 -> return NoopControlFrame
     6 -> getPing header
     7 -> getGoAway header
     8 -> fail "Received HEADERS frame. Not implemented."
@@ -296,6 +296,10 @@ putFrame frame = do
       putWord32be 32 (fromIntegral $ length settingsFrameValues)
       mapM_ putByteString (L.toChunks payload)
 
+    NoopControlFrame ->
+      putControlFrameHeader
+        (mkControlHeaderWithLength NoopControlFrame 0)
+
 putWord32le24 :: Word32 -> BitPut ()
 putWord32le24 w = do
   let w1 = fromIntegral w :: Word8
@@ -314,10 +318,12 @@ mkControlHeaderWithLength frame payloadLength = ControlFrameHeader
                          SynReplyControlFrame  {} -> 2
                          RstStreamControlFrame {} -> 3
                          SettingsFrame         {} -> 4
+                         NoopControlFrame         -> 5
                          PingControlFrame      {} -> 6
                          GoAwayFrame           {} -> 7
   , controlFrameFlags_ = case frame of
                            PingControlFrame {} -> 0
+                           NoopControlFrame    -> 0
                            _                   -> controlFrameFlags frame
   , controlFrameLength = payloadLength
   }
