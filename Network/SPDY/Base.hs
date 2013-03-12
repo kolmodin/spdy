@@ -7,7 +7,7 @@ import           Control.Concurrent          (ThreadId, forkIO)
 import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
-import           Control.Monad               (forever, liftM)
+import           Control.Monad               (liftM)
 import           Data.Binary.Get             (runGetOrFail)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
