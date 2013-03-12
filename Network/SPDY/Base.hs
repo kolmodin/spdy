@@ -98,6 +98,7 @@ receiver sessionMVar inp cb = go
             withMVar sessionMVar $ \ session -> do
               enqueueFrame session maxBound Nothing (return (PingControlFrame pingID))
             go
+          NoopControlFrame -> go
           unknown -> do
             print $ C8.pack ("<<< " ++ show unknown)
             go
