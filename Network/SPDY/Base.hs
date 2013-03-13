@@ -14,6 +14,7 @@ import           Data.Bits                   (testBit)
 import qualified Data.ByteString             as B
 import qualified Data.ByteString.Char8       as C8
 import qualified Data.ByteString.Lazy        as L
+import           Data.IORef                  (IORef, newIORef, readIORef, writeIORef)
 import           Data.Ord                    (comparing)
 
 -- 3rd party
@@ -39,8 +40,8 @@ data Session = Session
   , sessionActiveStreams        :: HashMap StreamID Stream
   , sessionReceiverThread       :: ThreadId
   , sessionSenderThread         :: ThreadId
-  , sessionReceiveZContext      :: Z.Inflate
-  , sessionSendZContext         :: Z.Deflate
+  , sessionRecvReplyZContext    :: IORef (Maybe Z.Inflate)
+  , sessionSendSynZContext      :: IORef (Maybe Z.Deflate)
   }
 
 data Stream = Stream
@@ -60,8 +61,8 @@ data Callbacks = Callbacks
 
 defaultSessionState :: Queue -> ThreadId -> ThreadId -> IO Session
 defaultSessionState queue receiverId senderId = do
-  zInflate <- Z.initInflateWithDictionary Z.defaultWindowBits nvhDictionary
-  zDeflate <- Z.initDeflateWithDictionary 6 nvhDictionary Z.defaultWindowBits
+  zInflate <- newIORef Nothing
+  zDeflate <- newIORef Nothing
   return $ Session queue (-1) 0 Map.empty receiverId senderId zInflate zDeflate
 
 newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO (MVar Session)
@@ -90,7 +91,7 @@ receiver sessionMVar inp cb = go
             go
           SynReplyControlFrame flags streamID nvhBytes -> do
             nvh <- withMVar sessionMVar $ \ session -> do
-              let inflate = sessionReceiveZContext session
+              let inflate = sessionRecvReplyZContext session
               decodeNVH (L.fromStrict nvhBytes) inflate
             cb_recv_syn_reply_frame cb flags streamID nvh
             go
@@ -129,7 +130,7 @@ sendSyn session fl pri nvh = do
   let nextSID = sessionLastUsedStreamID session + 2
       nextSession = session { sessionLastUsedStreamID = nextSID }
   enqueueFrame session pri (Just nextSID) $ do
-    nvhBytes <- encodeNVH nvh (sessionSendZContext session)
+    nvhBytes <- encodeNVH nvh (sessionSendSynZContext session)
     let frame = SynStreamControlFrame fl nextSID 0 pri nvhBytes
     return frame
   return (nextSession, nextSID)
@@ -158,18 +159,43 @@ mkStream :: StreamID -> Priority -> IO Stream
 mkStream sid pri = do
   return $ Stream sid pri False False False
 
-encodeNVH :: NVH -> Z.Deflate -> IO L.ByteString
-encodeNVH nvh deflate =
+encodeNVH :: NVH -> IORef (Maybe Z.Deflate) -> IO L.ByteString
+encodeNVH nvh deflateRef = do
+  deflate <- getDeflate deflateRef
   deflateWithFlush deflate $
     runPut (runBitPut (putNVHBlock nvh))
 
-decodeNVH :: L.ByteString -> Z.Inflate -> IO NameValueHeaderBlock
-decodeNVH bytes zInflate = do
-  bytes' <- inflateWithFlush zInflate (L.toStrict bytes)
+decodeNVH :: L.ByteString -> IORef (Maybe Z.Inflate) -> IO NameValueHeaderBlock
+decodeNVH bytes inflateRef = do
+  inflate <- getInflate inflateRef
+  bytes' <- inflateWithFlush inflate (L.toStrict bytes)
   case runGetOrFail (runBitGet getNVHBlock) bytes' of
     Right (_, _, nvh) -> return nvh
     -- Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
     -- Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
+
+
+getOrMkNew :: IO a -> IORef (Maybe a) -> IO a
+getOrMkNew new ref = do
+  v <- readIORef ref
+  case v of
+    Just x -> return x
+    Nothing -> do
+      x <- new
+      writeIORef ref (Just x)
+      return x
+
+mkInflate :: IO Z.Inflate
+mkInflate = Z.initInflateWithDictionary Z.defaultWindowBits nvhDictionary
+
+mkDeflate :: IO Z.Deflate
+mkDeflate = Z.initDeflateWithDictionary 6 nvhDictionary Z.defaultWindowBits
+
+getDeflate :: IORef (Maybe Z.Deflate) -> IO Z.Deflate
+getDeflate = getOrMkNew mkDeflate
+
+getInflate :: IORef (Maybe Z.Inflate) -> IO Z.Inflate
+getInflate = getOrMkNew mkInflate
 
 inflateWithFlush :: Z.Inflate -> B.ByteString -> IO L.ByteString
 inflateWithFlush zInflate bytes = do
