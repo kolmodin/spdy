@@ -3,6 +3,7 @@ module Main where
 
 import           Control.Concurrent.MVar
 import qualified Data.ByteString         as B
+import qualified Data.ByteString.Lazy    as L
 import System.IO (Handle, IOMode(WriteMode), openFile, hClose)
 
 
@@ -24,8 +25,8 @@ callbacks handle = Callbacks
   { cb_end_of_input = do
       putStrLn "eof in cb"
   , cb_recv_data_frame = \flags streamId payload -> do
-      print ("data_frame", flags, streamId, "payload: " ++ show (B.length payload) ++ " bytes")
-      B.hPut handle payload
+      print ("data_frame", flags, streamId, "payload: " ++ show (L.length payload) ++ " bytes")
+      L.hPut handle payload
       if (flags==1)
         then hClose handle >> putStrLn "done"
         else return ()

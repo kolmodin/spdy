@@ -54,7 +54,7 @@ data Stream = Stream
 
 data Callbacks = Callbacks
   { cb_end_of_input         :: IO ()
-  , cb_recv_data_frame      :: Flags -> StreamID -> B.ByteString -> IO ()
+  , cb_recv_data_frame      :: Flags -> StreamID -> L.ByteString -> IO ()
   , cb_recv_syn_frame       :: Flags -> StreamID -> StreamID -> Priority -> NVH -> IO ()
   , cb_recv_syn_reply_frame :: Flags -> StreamID -> NVH -> IO ()
   }

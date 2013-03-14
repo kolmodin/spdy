@@ -202,7 +202,7 @@ frameHandler app sockaddr state frame = do
           case bodyChan of
             Nothing -> do sendRstStream state sId 2 -- which error code?
                           return state
-            Just chan -> do writeChan chan (Just payload)
+            Just chan -> do writeChan chan (Just (L.toStrict payload))
                             when flag_fin $ do
                               writeChan chan Nothing
                             let s' | flag_fin = s { streamStateBodyChan = Nothing }
@@ -383,7 +383,7 @@ onSynStreamFrame app sockaddr state flags sId pri nvh = do
   where
   utf8 (s,t) = (decodeUtf8 s, decodeUtf8 t)
   showStatus (Status statusCode statusMessage) = S.concat [C8.pack (show statusCode), " ", statusMessage]
-  mkDataFrame = DataFrame 0 sId
+  mkDataFrame = DataFrame 0 sId . L.fromStrict
   enqueueFrameSink =
     sinkState
       ()

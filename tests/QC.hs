@@ -93,7 +93,7 @@ arbitraryDataFrame = do
  sId <- arbitraryWord31be 
  flags <- arbitrary
  payload <- genPayload
- return (DataFrame flags sId payload)
+ return (DataFrame flags sId (L.fromStrict payload))
 
 arbitrarySynStreamFrame :: Gen Frame
 arbitrarySynStreamFrame = do

@@ -27,7 +27,7 @@ data Frame
   = DataFrame {
       dataFrameFlags    :: Word8,
       dataFrameStreamID :: Word32,
-      dataFramePayload  :: B.ByteString }
+      dataFramePayload  :: L.ByteString }
   | SynStreamControlFrame {
       controlFrameFlags                :: Word8,
       synStreamFrameStreamID           :: Word32,
@@ -107,7 +107,7 @@ getDataFrame = do
   dataFrameStreamID <- getWord32be 31
   dataFrameFlags <- getWord8 8
   len <- fromIntegral <$> getWord32be 24
-  dataFramePayload <- getByteString len
+  dataFramePayload <- getLazyByteString len
   return DataFrame { .. }
 
 getControlFrame :: BitGet Frame
@@ -246,8 +246,8 @@ putFrame frame = do
       putBool False
       putWord32be 31 dataFrameStreamID
       putWord8 8 dataFrameFlags
-      putWord32be 24 (fromIntegral $ B.length dataFramePayload)
-      putByteString dataFramePayload
+      putWord32be 24 (fromIntegral $ L.length dataFramePayload)
+      mapM_ putByteString (L.toChunks dataFramePayload)
 
     SynStreamControlFrame { .. } -> do
       let payload = runPut $ runBitPut $ do
