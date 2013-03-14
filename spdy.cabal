@@ -39,7 +39,7 @@ library
     Network.SPDY.Connection
 
   build-depends: base, bytestring, network, text, stm >= 2.3,
-                 binary >= 0.7.0.0, binary-bits, attoparsec,
+                 binary >= 0.7.0.0, binary-bits>=0.3, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
                  tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
@@ -57,7 +57,7 @@ test-suite qc
                  test-framework-quickcheck2,
                  
                  base, bytestring, network, text, stm >= 2.3,
-                 binary >= 0.7.0.0, binary-bits, attoparsec,
+                 binary >= 0.7.0.0, binary-bits>=0.3, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
                  tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
@@ -73,7 +73,7 @@ test-suite server-roundtrip
                  test-framework-quickcheck2,
                  
                  base, bytestring, network, text, stm >= 2.3,
-                 binary >= 0.7.0.0, binary-bits, attoparsec,
+                 binary >= 0.7.0.0, binary-bits>=0.3, attoparsec,
                  conduit == 0.5.*, zlib-bindings == 0.1.*,
                  tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
