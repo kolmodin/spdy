@@ -40,8 +40,8 @@ data Session = Session
   , sessionActiveStreams        :: HashMap StreamID Stream
   , sessionReceiverThread       :: ThreadId
   , sessionSenderThread         :: ThreadId
-  , sessionRecvReplyZContext    :: IORef (Maybe Z.Inflate)
-  , sessionSendSynZContext      :: IORef (Maybe Z.Deflate)
+  , sessionRecvNVHZContext      :: IORef (Maybe Z.Inflate)
+  , sessionSendNVHZContext      :: IORef (Maybe Z.Deflate)
   }
 
 data Stream = Stream
@@ -61,9 +61,9 @@ data Callbacks = Callbacks
 
 defaultSessionState :: Queue -> ThreadId -> ThreadId -> IO Session
 defaultSessionState queue receiverId senderId = do
-  zInflate <- newIORef Nothing
-  zDeflate <- newIORef Nothing
-  return $ Session queue (-1) 0 Map.empty receiverId senderId zInflate zDeflate
+  zinf <- newIORef Nothing
+  zdef <- newIORef Nothing
+  return $ Session queue (-1) 0 Map.empty receiverId senderId zinf zdef
 
 newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO (MVar Session)
 newClientFromCallbacks inp out cb = do
@@ -91,9 +91,15 @@ receiver sessionMVar inp cb = go
             go
           SynReplyControlFrame flags streamID nvhBytes -> do
             nvh <- withMVar sessionMVar $ \ session -> do
-              let inflate = sessionRecvReplyZContext session
+              let inflate = sessionRecvNVHZContext session
               decodeNVH (L.fromStrict nvhBytes) inflate
             cb_recv_syn_reply_frame cb flags streamID nvh
+            go
+          SynStreamControlFrame  flags streamId associatedStreamId priority nvhBytes -> do
+            nvh <- withMVar sessionMVar $ \ session -> do
+              let inflate = sessionRecvNVHZContext session
+              decodeNVH nvhBytes inflate
+            cb_recv_syn_frame cb flags streamId associatedStreamId priority nvh
             go
           PingControlFrame pingID -> do
             withMVar sessionMVar $ \ session -> do
@@ -130,7 +136,7 @@ sendSyn session fl pri nvh = do
   let nextSID = sessionLastUsedStreamID session + 2
       nextSession = session { sessionLastUsedStreamID = nextSID }
   enqueueFrame session pri (Just nextSID) $ do
-    nvhBytes <- encodeNVH nvh (sessionSendSynZContext session)
+    nvhBytes <- encodeNVH nvh (sessionSendNVHZContext session)
     let frame = SynStreamControlFrame fl nextSID 0 pri nvhBytes
     return frame
   return (nextSession, nextSID)
