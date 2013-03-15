@@ -12,10 +12,10 @@ import           Data.Binary.Get             (runGetOrFail)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
 import qualified Data.ByteString             as B
-import qualified Data.ByteString.Char8       as C8
 import qualified Data.ByteString.Lazy        as L
 import           Data.IORef                  (IORef, newIORef, readIORef, writeIORef)
 import           Data.Ord                    (comparing)
+import           Data.Word                   (Word8,Word32)
 
 -- 3rd party
 import qualified Codec.Zlib                  as Z
@@ -57,6 +57,9 @@ data Callbacks = Callbacks
   , cb_recv_data_frame      :: Flags -> StreamID -> L.ByteString -> IO ()
   , cb_recv_syn_frame       :: Flags -> StreamID -> StreamID -> Priority -> NVH -> IO ()
   , cb_recv_syn_reply_frame :: Flags -> StreamID -> NVH -> IO ()
+  , cb_go_away              :: Flags -> StreamID -> IO ()
+  , cb_settings_frame       :: Flags -> [(Word32, Word8, Word32)] -> IO ()
+  , cb_rst_frame            :: Flags -> StreamID -> RstStreamStatusCode -> IO ()
   }
 
 defaultSessionState :: Queue -> ThreadId -> ThreadId -> IO Session
@@ -101,14 +104,20 @@ receiver sessionMVar inp cb = go
               decodeNVH nvhBytes inflate
             cb_recv_syn_frame cb flags streamId associatedStreamId priority nvh
             go
+          GoAwayFrame flags lastGoodStreamId -> do
+            cb_go_away cb flags lastGoodStreamId
+            go
+          SettingsFrame flags values -> do
+            cb_settings_frame cb flags values
+            go
+          RstStreamControlFrame flags streamId statusCode -> do
+            cb_rst_frame cb flags streamId statusCode
+            go
           PingControlFrame pingID -> do
             withMVar sessionMVar $ \ session -> do
               enqueueFrame session maxBound Nothing (return (PingControlFrame pingID))
             go
           NoopControlFrame -> go
-          unknown -> do
-            print $ C8.pack ("<<< " ++ show unknown)
-            go
 
 sender :: OutputStream L.ByteString -> TVar [(Priority, Maybe StreamID, IO Frame)] -> IO ()
 sender out queue = go
