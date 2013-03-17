@@ -28,15 +28,15 @@ executable spdy
 
 library
   exposed-modules:
-    Network.Wai.Handler.Hope
-    -- Network.SPDY
-  other-modules:
+    Network.Wai.Handler.Hope,
     Network.SPDY.Frame,
-    Network.SPDY.Utils,
     Network.SPDY.Base,
+    Network.SPDY.Utils,
     Network.SPDY.Binary,
     Network.SPDY.TLS,
     Network.SPDY.Connection
+    -- Network.SPDY
+  other-modules:
 
   build-depends: base, bytestring, network, text, stm >= 2.3,
                  binary >= 0.7.0.0, binary-bits>=0.3, attoparsec,
@@ -47,6 +47,16 @@ library
                  unordered-containers, io-streams, cprng-aes
 
   ghc-options: -threaded -Wall
+
+
+executable sample-app
+  main-is: NewAPITest.hs
+  hs-source-dirs:    example
+  other-modules:
+
+  build-depends: spdy, base, bytestring
+  ghc-options: -threaded -Wall
+
 
 test-suite qc
   type: exitcode-stdio-1.0

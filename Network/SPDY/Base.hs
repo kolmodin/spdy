@@ -13,9 +13,11 @@ import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
 import qualified Data.ByteString             as B
 import qualified Data.ByteString.Lazy        as L
-import           Data.IORef                  (IORef, newIORef, readIORef, writeIORef)
+import           Data.IORef                  (IORef, newIORef, readIORef,
+                                              writeIORef)
+import           Data.Maybe                  (isJust)
 import           Data.Ord                    (comparing)
-import           Data.Word                   (Word8,Word32)
+import           Data.Word                   (Word32, Word8)
 
 -- 3rd party
 import qualified Codec.Zlib                  as Z
@@ -29,9 +31,18 @@ import qualified System.IO.Streams           as Streams
 -- this library
 import           Network.SPDY.Frame
 
-type Queue = TVar [(Priority, Maybe StreamID, IO Frame)]
+type Queue = TVar [(Priority, Maybe StreamID, OutgoingFrame)]
+
+data FailReason = ServerSentGoAway
+
+data OutgoingFrame
+  = OutgoingSynFrame (StreamID -> IO ()) (FailReason -> IO ()) (IO Frame)
+  -- | OutgoingFrameIO (IO Frame)
+  | OutgoingFrame Frame
 
 data SpdyRole = SpdyServer | SpdyClient
+
+type SpdySession = MVar Session
 
 data Session = Session
   { sessionSendQueue            :: Queue
@@ -68,7 +79,7 @@ defaultSessionState queue receiverId senderId = do
   zdef <- newIORef Nothing
   return $ Session queue (-1) 0 Map.empty receiverId senderId zinf zdef
 
-newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO (MVar Session)
+newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO SpdySession
 newClientFromCallbacks inp out cb = do
   sessionMVar <- newEmptyMVar
   queue <- newTVarIO []
@@ -78,7 +89,7 @@ newClientFromCallbacks inp out cb = do
   putMVar sessionMVar session
   return sessionMVar
 
-receiver :: MVar Session -> InputStream Frame -> Callbacks -> IO ()
+receiver :: SpdySession -> InputStream Frame -> Callbacks -> IO ()
 receiver sessionMVar inp cb = go
   where
   go = do
@@ -114,51 +125,68 @@ receiver sessionMVar inp cb = go
             cb_rst_frame cb flags streamId statusCode
             go
           PingControlFrame pingID -> do
-            withMVar sessionMVar $ \ session -> do
-              enqueueFrame session maxBound Nothing (return (PingControlFrame pingID))
+            queue <- getQueue sessionMVar
+            enqueueFrame queue maxBound Nothing (OutgoingFrame (PingControlFrame pingID))
             go
           NoopControlFrame -> go
 
-sender :: OutputStream L.ByteString -> TVar [(Priority, Maybe StreamID, IO Frame)] -> IO ()
+sender :: OutputStream L.ByteString -> Queue -> IO ()
 sender out queue = go
   where
   go = do
-    (frameIO,len) <- getNextFrame
-    --putStrLn "Sending frame..."
-    frame <- frameIO
-    --print $ C8.pack $ ">>> " ++ show frame
-    --putStrLn (show len ++ " more items in queue")
+    outFrame <- getNextFrame
+    frame <- case outFrame of
+      OutgoingSynFrame successCb _ frameIO -> do
+        frame <- frameIO
+        successCb (synStreamFrameStreamID frame)
+        return frame
+      OutgoingFrame frame -> return frame
     Streams.write (Just (runPut (runBitPut (putFrame frame)))) out
     go
   getNextFrame =
     atomically $ do
       q <- readTVar queue
-      let len = length q
       case q of
         ((_, _,frame):rest) ->
           do writeTVar queue rest
-             return (frame, len-1)
+             return frame
         [] -> retry
 
-sendSyn :: Session -> Flags -> Priority -> NVH -> IO (Session, StreamID)
-sendSyn session fl pri nvh = do
-  let nextSID = sessionLastUsedStreamID session + 2
-      nextSession = session { sessionLastUsedStreamID = nextSID }
-  enqueueFrame session pri (Just nextSID) $ do
-    nvhBytes <- encodeNVH nvh (sessionSendNVHZContext session)
-    let frame = SynStreamControlFrame fl nextSID 0 pri nvhBytes
-    return frame
-  return (nextSession, nextSID)
+submitRequest :: SpdySession -> Priority -> NVH
+              -> Maybe (InputStream B.ByteString)
+              -> (StreamID -> IO ())
+              -> (FailReason -> IO ())
+              -> IO ()
+submitRequest sessionMVar pri nvh postData successCb failCb = do
+  sendSyn sessionMVar flags pri nvh successCb' failCb
+  where
+    hasData = isJust postData
+    flags = if hasData then 0 else 1 -- flag_fin
+    successCb' _streamId = successCb _streamId -- TODO: add postData to queue
+
+sendSyn :: SpdySession -> Flags -> Priority -> NVH -> (StreamID -> IO ()) -> (FailReason -> IO ()) -> IO ()
+sendSyn sessionMVar fl pri nvh successCb failCb = do
+  queue <- getQueue sessionMVar
+  enqueueFrame queue pri Nothing $ OutgoingSynFrame successCb failCb $ do
+    (defl, nextSID) <- modifyMVar sessionMVar $ \session -> do
+      let nextSID = sessionLastUsedStreamID session + 2
+          nextSession = session { sessionLastUsedStreamID = nextSID }
+      return (nextSession, (sessionSendNVHZContext session, nextSID))
+    nvhBytes <- encodeNVH nvh defl
+    return $ SynStreamControlFrame fl nextSID 0 pri nvhBytes
+
+getQueue :: SpdySession -> IO Queue
+getQueue mvar = fmap sessionSendQueue (readMVar mvar)
 
 sendGoAway :: Session -> StreamID -> IO ()
 sendGoAway session lastGoodStreamID = do
-  enqueueFrame session 10 Nothing $ do
-    return $ GoAwayFrame 0 lastGoodStreamID
+  let queue = sessionSendQueue session
+  enqueueFrame queue 10 Nothing $
+    OutgoingFrame $ GoAwayFrame 0 lastGoodStreamID
 
-enqueueFrame :: Session -> Priority -> Maybe StreamID -> IO Frame -> IO ()
-enqueueFrame session pri0 sId0 frame =
+enqueueFrame :: Queue -> Priority -> Maybe StreamID -> OutgoingFrame -> IO ()
+enqueueFrame queue pri0 sId0 frame =
   atomically $ do
-    let queue = sessionSendQueue session
     q <- readTVar queue
     writeTVar queue (insertLastBy orderer (pri0, sId0, frame) q)
   where
@@ -169,10 +197,6 @@ enqueueFrame session pri0 sId0 frame =
          LT -> x : ys
          _  -> y : insertLastBy cmp x ys'
     orderer = comparing (\(pri, sId, _) -> (-(toInteger pri), sId))
-
-mkStream :: StreamID -> Priority -> IO Stream
-mkStream sid pri = do
-  return $ Stream sid pri False False False
 
 encodeNVH :: NVH -> IORef (Maybe Z.Deflate) -> IO L.ByteString
 encodeNVH nvh deflateRef = do
@@ -188,7 +212,6 @@ decodeNVH bytes inflateRef = do
     Right (_, _, nvh) -> return nvh
     -- Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
     -- Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
-
 
 getOrMkNew :: IO a -> IORef (Maybe a) -> IO a
 getOrMkNew new ref = do
