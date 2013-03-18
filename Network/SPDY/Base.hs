@@ -8,6 +8,7 @@ import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
 import           Control.Monad               (liftM)
+import           Control.Monad               (when)
 import           Data.Binary.Get             (runGetOrFail)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
@@ -45,7 +46,8 @@ data SpdyRole = SpdyServer | SpdyClient
 type SpdySession = MVar Session
 
 data Session = Session
-  { sessionSendQueue            :: Queue
+  { sessionRole                 :: SpdyRole
+  , sessionSendQueue            :: Queue
   , sessionLastUsedStreamID     :: StreamID
   , sessionLastReceivedStreamID :: StreamID
   , sessionActiveStreams        :: HashMap StreamID Stream
@@ -53,6 +55,7 @@ data Session = Session
   , sessionSenderThread         :: ThreadId
   , sessionRecvNVHZContext      :: IORef (Maybe Z.Inflate)
   , sessionSendNVHZContext      :: IORef (Maybe Z.Deflate)
+  , sessionNextUniquePingId     :: Word32
   }
 
 data Stream = Stream
@@ -73,11 +76,14 @@ data Callbacks = Callbacks
   , cb_rst_frame            :: Flags -> StreamID -> RstStreamStatusCode -> IO ()
   }
 
-defaultSessionState :: Queue -> ThreadId -> ThreadId -> IO Session
-defaultSessionState queue receiverId senderId = do
+defaultSessionState :: SpdyRole -> Queue -> ThreadId -> ThreadId -> IO Session
+defaultSessionState role queue receiverId senderId = do
   zinf <- newIORef Nothing
   zdef <- newIORef Nothing
-  return $ Session queue (-1) 0 Map.empty receiverId senderId zinf zdef
+  return $ Session role queue (-1) 0 Map.empty receiverId senderId zinf zdef (ping role)
+  where
+    ping SpdyServer = 2
+    ping SpdyClient = 1
 
 newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO SpdySession
 newClientFromCallbacks inp out cb = do
@@ -85,7 +91,7 @@ newClientFromCallbacks inp out cb = do
   queue <- newTVarIO []
   receiverThreadId <- forkIO $ receiver sessionMVar inp cb
   senderThreadId <- forkIO $ sender out queue
-  session <- defaultSessionState queue receiverThreadId senderThreadId
+  session <- defaultSessionState SpdyClient queue receiverThreadId senderThreadId
   putMVar sessionMVar session
   return sessionMVar
 
@@ -125,10 +131,18 @@ receiver sessionMVar inp cb = go
             cb_rst_frame cb flags streamId statusCode
             go
           PingControlFrame pingID -> do
-            queue <- getQueue sessionMVar
-            enqueueFrame queue maxBound Nothing (OutgoingFrame (PingControlFrame pingID))
+            let match SpdyServer = odd pingID -- remote is client
+                match SpdyClient = even pingID -- remote is server
+            role <- myRole sessionMVar
+            when (match role) $ do
+                queue <- getQueue sessionMVar
+                enqueueFrame queue maxBound Nothing
+                  (OutgoingFrame (PingControlFrame pingID))
             go
           NoopControlFrame -> go
+
+myRole :: SpdySession -> IO SpdyRole
+myRole = fmap sessionRole . readMVar
 
 sender :: OutputStream L.ByteString -> Queue -> IO ()
 sender out queue = go
@@ -151,6 +165,13 @@ sender out queue = go
           do writeTVar queue rest
              return frame
         [] -> retry
+
+submitPing :: SpdySession -> IO PingID
+submitPing spdy = modifyMVar spdy $ \session -> do
+  let pingID = sessionNextUniquePingId session
+  enqueueFrame (sessionSendQueue session) maxBound Nothing $
+    OutgoingFrame $ PingControlFrame pingID
+  return (session { sessionNextUniquePingId = pingID + 2 }, pingID)
 
 submitRequest :: SpdySession -> Priority -> NVH
               -> Maybe (InputStream B.ByteString)

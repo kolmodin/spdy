@@ -78,6 +78,7 @@ data RstStreamStatusCode
 type StreamID = Word32
 type Priority = Word8
 type Flags = Word8
+type PingID = Word32
 type NameValueHeaderBlock = [(Text,Text)]
 type NVH = NameValueHeaderBlock
 
