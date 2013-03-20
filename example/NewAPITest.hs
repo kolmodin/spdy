@@ -41,6 +41,8 @@ callbacks stateRef = Callbacks
      print ("syn_frame"::String, flags, streamId, associatedStreamId, priority, nvh)
   , cb_recv_syn_reply_frame = \flags streamId nvh ->
       print ("syn_reply_frame"::String, flags, streamId, nvh)
+  , cb_recv_ping_frame = \pingId ->
+      print ("ping reply"::String, pingId)
   , cb_settings_frame = \flags settings -> print ("settiongs"::String, flags, settings)
   , cb_rst_frame = \flags streamId code -> print ("rst"::String, flags, streamId, code)
   , cb_go_away = \flags streamId -> print ("go away"::String, flags, streamId)

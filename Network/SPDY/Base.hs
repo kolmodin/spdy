@@ -8,7 +8,6 @@ import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
 import           Control.Monad               (liftM)
-import           Control.Monad               (when)
 import           Data.Binary.Get             (runGetOrFail)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
@@ -71,6 +70,7 @@ data Callbacks = Callbacks
   , cb_recv_data_frame      :: Flags -> StreamID -> L.ByteString -> IO ()
   , cb_recv_syn_frame       :: Flags -> StreamID -> StreamID -> Priority -> NVH -> IO ()
   , cb_recv_syn_reply_frame :: Flags -> StreamID -> NVH -> IO ()
+  , cb_recv_ping_frame      :: PingID -> IO ()
   , cb_go_away              :: Flags -> StreamID -> IO ()
   , cb_settings_frame       :: Flags -> [(Word32, Word8, Word32)] -> IO ()
   , cb_rst_frame            :: Flags -> StreamID -> RstStreamStatusCode -> IO ()
@@ -131,13 +131,15 @@ receiver sessionMVar inp cb = go
             cb_rst_frame cb flags streamId statusCode
             go
           PingControlFrame pingID -> do
-            let match SpdyServer = odd pingID -- remote is client
-                match SpdyClient = even pingID -- remote is server
             role <- myRole sessionMVar
-            when (match role) $ do
-                queue <- getQueue sessionMVar
-                enqueueFrame queue maxBound Nothing
-                  (OutgoingFrame (PingControlFrame pingID))
+            let reply = do
+                  queue <- getQueue sessionMVar
+                  enqueueFrame queue maxBound Nothing
+                    (OutgoingFrame (PingControlFrame pingID))
+            case role of
+              SpdyClient | even pingID -> reply -- remote is server
+              SpdyServer | odd pingID -> reply -- remote is client
+              _ -> cb_recv_ping_frame cb pingID
             go
           NoopControlFrame -> go
 
