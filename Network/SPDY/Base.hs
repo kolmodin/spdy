@@ -7,14 +7,11 @@ import           Control.Concurrent          (ThreadId, forkIO)
 import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
-import           Control.Monad               (liftM)
-import           Data.Binary.Get             (runGetOrFail)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
 import qualified Data.ByteString             as B
 import qualified Data.ByteString.Lazy        as L
-import           Data.IORef                  (IORef, newIORef, readIORef,
-                                              writeIORef)
+import           Data.IORef                  (IORef, newIORef)
 import           Data.Maybe                  (isJust)
 import           Data.Ord                    (comparing)
 import           Data.Time.Clock.POSIX       (POSIXTime, getPOSIXTime)
@@ -22,7 +19,6 @@ import           Data.Word                   (Word32, Word8)
 
 -- 3rd party
 import qualified Codec.Zlib                  as Z
-import           Data.Binary.Bits.Get        (runBitGet)
 import           Data.Binary.Bits.Put        (runBitPut)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as Map
@@ -31,6 +27,7 @@ import qualified System.IO.Streams           as Streams
 
 -- this library
 import           Network.SPDY.Frame
+import           Network.SPDY.NVH
 
 type Queue = TVar [(Priority, Maybe StreamID, OutgoingFrame)]
 
@@ -243,55 +240,3 @@ enqueueFrame queue pri0 sId0 frame =
          LT -> x : ys
          _  -> y : insertLastBy cmp x ys'
     orderer = comparing (\(pri, sId, _) -> (-(toInteger pri), sId))
-
-encodeNVH :: NVH -> IORef (Maybe Z.Deflate) -> IO L.ByteString
-encodeNVH nvh deflateRef = do
-  deflate <- getDeflate deflateRef
-  deflateWithFlush deflate $
-    runPut (runBitPut (putNVHBlock nvh))
-
-decodeNVH :: L.ByteString -> IORef (Maybe Z.Inflate) -> IO NameValueHeaderBlock
-decodeNVH bytes inflateRef = do
-  inflate <- getInflate inflateRef
-  bytes' <- inflateWithFlush inflate (L.toStrict bytes)
-  case runGetOrFail (runBitGet getNVHBlock) bytes' of
-    Right (_, _, nvh) -> return nvh
-    -- Fail _ _ msg -> throwIO (SPDYNVHException Nothing msg)
-    -- Partial _    -> throwIO (SPDYNVHException Nothing "Could not parse NVH block, returned Partial.")
-
-getOrMkNew :: IO a -> IORef (Maybe a) -> IO a
-getOrMkNew new ref = do
-  v <- readIORef ref
-  case v of
-    Just x -> return x
-    Nothing -> do
-      x <- new
-      writeIORef ref (Just x)
-      return x
-
-mkInflate :: IO Z.Inflate
-mkInflate = Z.initInflateWithDictionary Z.defaultWindowBits nvhDictionary
-
-mkDeflate :: IO Z.Deflate
-mkDeflate = Z.initDeflateWithDictionary 6 nvhDictionary Z.defaultWindowBits
-
-getDeflate :: IORef (Maybe Z.Deflate) -> IO Z.Deflate
-getDeflate = getOrMkNew mkDeflate
-
-getInflate :: IORef (Maybe Z.Inflate) -> IO Z.Inflate
-getInflate = getOrMkNew mkInflate
-
-inflateWithFlush :: Z.Inflate -> B.ByteString -> IO L.ByteString
-inflateWithFlush zInflate bytes = do
-  a <- unfoldM =<< Z.feedInflate zInflate bytes
-  b <- Z.flushInflate zInflate
-  return $ L.fromChunks (a++[b])
-
-unfoldM :: Monad m => m (Maybe a) -> m [a]
-unfoldM ma = ma >>= maybe (return []) (\x -> liftM ((:) x) (unfoldM ma))
-
-deflateWithFlush :: Z.Deflate -> L.ByteString -> IO L.ByteString
-deflateWithFlush deflate lbs = do
-  str <- unfoldM =<< Z.feedDeflate deflate (B.concat (L.toChunks lbs))
-  fl <- unfoldM (Z.flushDeflate deflate)
-  return (L.fromChunks (str ++ fl))

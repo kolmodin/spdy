@@ -34,7 +34,8 @@ library
     Network.SPDY.Utils,
     Network.SPDY.Binary,
     Network.SPDY.TLS,
-    Network.SPDY.Connection
+    Network.SPDY.Connection,
+    Network.SPDY.NVH
     -- Network.SPDY
   other-modules:
 
