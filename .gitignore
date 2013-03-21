@@ -3,3 +3,8 @@ cabal-dev/
 cabal.sandbox.config
 dist/
 *.swp
+*.hi
+*.o
+*.aux
+*.hp
+*.prof*
