@@ -44,7 +44,7 @@ library
                  tls >= 1.1.0, tls-extra, pem, crypto-random-api, certificate,
                  wai, http-types, vault, transformers,
                  blaze-builder, case-insensitive,
-                 unordered-containers, io-streams, cprng-aes
+                 unordered-containers, io-streams, cprng-aes, time
 
   ghc-options: -threaded -Wall
 

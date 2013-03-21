@@ -17,6 +17,7 @@ import           Data.IORef                  (IORef, newIORef, readIORef,
                                               writeIORef)
 import           Data.Maybe                  (isJust)
 import           Data.Ord                    (comparing)
+import           Data.Time.Clock.POSIX       (POSIXTime, getPOSIXTime)
 import           Data.Word                   (Word32, Word8)
 
 -- 3rd party
@@ -37,7 +38,7 @@ data FailReason = ServerSentGoAway
 
 data OutgoingFrame
   = OutgoingSynFrame (StreamID -> IO ()) (FailReason -> IO ()) (IO Frame)
-  -- | OutgoingFrameIO (IO Frame)
+  | OutgoingFrameCb (IO ()) Frame
   | OutgoingFrame Frame
 
 data SpdyRole = SpdyServer | SpdyClient
@@ -54,6 +55,7 @@ data Session = Session
   , sessionSenderThread         :: ThreadId
   , sessionRecvNVHZContext      :: IORef (Maybe Z.Inflate)
   , sessionSendNVHZContext      :: IORef (Maybe Z.Deflate)
+  , sessionOutgoingPings        :: [(PingID, MVar POSIXTime)]
   , sessionNextUniquePingId     :: Word32
   }
 
@@ -70,7 +72,7 @@ data Callbacks = Callbacks
   , cb_recv_data_frame      :: Flags -> StreamID -> L.ByteString -> IO ()
   , cb_recv_syn_frame       :: Flags -> StreamID -> StreamID -> Priority -> NVH -> IO ()
   , cb_recv_syn_reply_frame :: Flags -> StreamID -> NVH -> IO ()
-  , cb_recv_ping_frame      :: PingID -> IO ()
+  , cb_recv_ping_frame      :: PingID -> POSIXTime -> POSIXTime -> IO ()
   , cb_go_away              :: Flags -> StreamID -> IO ()
   , cb_settings_frame       :: Flags -> [(Word32, Word8, Word32)] -> IO ()
   , cb_rst_frame            :: Flags -> StreamID -> RstStreamStatusCode -> IO ()
@@ -80,7 +82,7 @@ defaultSessionState :: SpdyRole -> Queue -> ThreadId -> ThreadId -> IO Session
 defaultSessionState role queue receiverId senderId = do
   zinf <- newIORef Nothing
   zdef <- newIORef Nothing
-  return $ Session role queue (-1) 0 Map.empty receiverId senderId zinf zdef (ping role)
+  return $ Session role queue (-1) 0 Map.empty receiverId senderId zinf zdef [] (ping role)
   where
     ping SpdyServer = 2
     ping SpdyClient = 1
@@ -139,7 +141,18 @@ receiver sessionMVar inp cb = go
             case role of
               SpdyClient | even pingID -> reply -- remote is server
               SpdyServer | odd pingID -> reply -- remote is client
-              _ -> cb_recv_ping_frame cb pingID
+              _ -> modifyMVar sessionMVar $ \ session -> do
+                let timeM = lookup pingID (sessionOutgoingPings session)
+                    session' = session { sessionOutgoingPings =
+                                 filter (\(pid, _) -> pid /= pingID)
+                                        (sessionOutgoingPings session) }
+                case timeM of
+                  Nothing -> return (session, ())
+                  Just timeMVar -> do
+                    now <- getPOSIXTime
+                    earlier <- readMVar timeMVar
+                    cb_recv_ping_frame cb pingID earlier now
+                    return (session', ())
             go
           NoopControlFrame -> go
 
@@ -156,6 +169,9 @@ sender out queue = go
         frame <- frameIO
         successCb (synStreamFrameStreamID frame)
         return frame
+      OutgoingFrameCb cb frame -> do
+        _ <- cb
+        return frame
       OutgoingFrame frame -> return frame
     Streams.write (Just (runPut (runBitPut (putFrame frame)))) out
     go
@@ -171,9 +187,16 @@ sender out queue = go
 submitPing :: SpdySession -> IO PingID
 submitPing spdy = modifyMVar spdy $ \session -> do
   let pingID = sessionNextUniquePingId session
+  timeRef <- newEmptyMVar
   enqueueFrame (sessionSendQueue session) maxBound Nothing $
-    OutgoingFrame $ PingControlFrame pingID
-  return (session { sessionNextUniquePingId = pingID + 2 }, pingID)
+    OutgoingFrameCb (updateTime timeRef) $ PingControlFrame pingID
+  return (session { sessionNextUniquePingId = pingID + 2
+                  , sessionOutgoingPings = addPing (pingID, timeRef) session}, pingID)
+  where
+    addPing tup session = tup : sessionOutgoingPings session
+    updateTime ref = do
+      newTime <- getPOSIXTime
+      putMVar ref newTime
 
 submitRequest :: SpdySession -> Priority -> NVH
               -> Maybe (InputStream B.ByteString)
