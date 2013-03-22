@@ -18,9 +18,11 @@ main :: IO ()
 main = do
   state <- newIORef []
   (_tlsctx, spdy) <- connect "dl.google.com" "443" (callbacks state)
-  sId <- sendRequest spdy $ \streamId -> do
+  {-sId <- sendRequest spdy $ \streamId -> do
     handle <- openFile "google-chrome.rpm" WriteMode
     modifyIORef state ((streamId,handle):)
+  -}
+  submitPing spdy
   getLine
   return ()
 

@@ -9,6 +9,7 @@ import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
+import           Data.Bits                   ((.&.))
 import qualified Data.ByteString             as B
 import qualified Data.ByteString.Lazy        as L
 import           Data.IORef                  (IORef, newIORef)
@@ -208,7 +209,7 @@ submitRequest sessionMVar pri nvh postData successCb failCb = do
     successCb' _streamId = successCb _streamId -- TODO: add postData to queue
 
 sendSyn :: SpdySession -> Flags -> Priority -> NVH -> (StreamID -> IO ()) -> (FailReason -> IO ()) -> IO ()
-sendSyn sessionMVar fl pri nvh successCb failCb = do
+sendSyn sessionMVar fl pri nvh successCb0 failCb = do
   queue <- getQueue sessionMVar
   enqueueFrame queue pri Nothing $ OutgoingSynFrame successCb failCb $ do
     (defl, nextSID) <- modifyMVar sessionMVar $ \session -> do
@@ -217,6 +218,20 @@ sendSyn sessionMVar fl pri nvh successCb failCb = do
       return (nextSession, (sessionSendNVHZContext session, nextSID))
     nvhBytes <- encodeNVH nvh defl
     return $ SynStreamControlFrame fl nextSID 0 pri nvhBytes
+  where
+    successCb streamId = do
+      modifyMVar_ sessionMVar $ \session -> do
+        let s = Stream
+                  { streamStreamID = streamId
+                  , streamPriority = pri
+                  , streamReceivedRst = False
+                  , streamThisClosed = fl .&. 1 /= 0
+                  , streamThatClosed = False
+                  }
+            streams = Map.insert streamId s (sessionActiveStreams session)
+        return session { sessionActiveStreams = streams }
+      successCb0 streamId
+
 
 getQueue :: SpdySession -> IO Queue
 getQueue mvar = fmap sessionSendQueue (readMVar mvar)
