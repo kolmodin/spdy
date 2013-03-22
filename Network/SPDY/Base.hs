@@ -48,7 +48,8 @@ data Session = Session
   , sessionSendQueue            :: Queue
   , sessionLastUsedStreamID     :: StreamID
   , sessionLastReceivedStreamID :: StreamID
-  , sessionActiveStreams        :: HashMap StreamID Stream
+  , sessionIncomingStreams      :: HashMap StreamID Stream
+  , sessionOutgoingStreams      :: HashMap StreamID Stream
   , sessionReceiverThread       :: ThreadId
   , sessionSenderThread         :: ThreadId
   , sessionRecvNVHZContext      :: IORef (Maybe Z.Inflate)
@@ -63,7 +64,7 @@ data Stream = Stream
   , streamReceivedRst :: Bool
   , streamThisClosed  :: Bool
   , streamThatClosed  :: Bool
-  }
+  } deriving Eq
 
 data Callbacks = Callbacks
   { cb_end_of_input         :: IO ()
@@ -80,7 +81,7 @@ defaultSessionState :: SpdyRole -> Queue -> ThreadId -> ThreadId -> IO Session
 defaultSessionState role queue receiverId senderId = do
   zinf <- newIORef Nothing
   zdef <- newIORef Nothing
-  return $ Session role queue (-1) 0 Map.empty receiverId senderId zinf zdef [] (ping role)
+  return $ Session role queue (-1) 0 Map.empty Map.empty receiverId senderId zinf zdef [] (ping role)
   where
     ping SpdyServer = 2
     ping SpdyClient = 1
@@ -106,8 +107,24 @@ receiver sessionMVar inp cb = go
         case frame of
           DataFrame flags streamID payload -> do
             let flag_fin = testBit flags 0
-            -- TODO: verify that there indeed is such a stream
-            cb_recv_data_frame cb flags streamID payload
+            modifyMVar_ sessionMVar $ \ session -> do
+              let streams = sessionOutgoingStreams session
+              let streamM = do
+                    stream <- Map.lookup streamID streams
+                    if not (streamThatClosed stream)
+                      then return stream
+                      else Nothing
+              case streamM of
+                Nothing -> -- Stream does not exist, or is already closed.
+                           -- Ignore this package.
+                           return session
+                Just _stream -> do
+                  -- The stream does exist, and we do await more data frames.
+                  cb_recv_data_frame cb flags streamID payload
+                  if flag_fin
+                    then return session { sessionOutgoingStreams =
+                           Map.adjust (\stream -> stream { streamThatClosed = flag_fin }) streamID streams }
+                    else return session
             go
           SynReplyControlFrame flags streamID nvhBytes -> do
             nvh <- withMVar sessionMVar $ \ session -> do
@@ -228,8 +245,8 @@ sendSyn sessionMVar fl pri nvh successCb0 failCb = do
                   , streamThisClosed = fl .&. 1 /= 0
                   , streamThatClosed = False
                   }
-            streams = Map.insert streamId s (sessionActiveStreams session)
-        return session { sessionActiveStreams = streams }
+            streams = Map.insert streamId s (sessionOutgoingStreams session)
+        return session { sessionOutgoingStreams = streams }
       successCb0 streamId
 
 
