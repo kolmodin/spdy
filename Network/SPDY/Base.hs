@@ -118,13 +118,20 @@ receiver sessionMVar inp cb = go
                 Nothing -> -- Stream does not exist, or is already closed.
                            -- Ignore this package.
                            return session
-                Just _stream -> do
+                Just stream0 -> do
                   -- The stream does exist, and we do await more data frames.
                   cb_recv_data_frame cb flags streamID payload
-                  if flag_fin
-                    then return session { sessionOutgoingStreams =
-                           Map.adjust (\stream -> stream { streamThatClosed = flag_fin }) streamID streams }
-                    else return session
+                  let this_closed = streamThisClosed stream0
+                  let streams' | flag_fin && this_closed =
+                                   -- Both sides closed the stream, remove it.
+                                   Map.delete streamID
+                               | flag_fin =
+                                   -- Other side closed the stream,
+                                   -- but we did not close from our side.
+                                   -- Odd, will this even happen?
+                                   Map.adjust (\stream -> stream { streamThatClosed = flag_fin }) streamID
+                               | otherwise = id
+                  return session { sessionOutgoingStreams = streams' streams }
             go
           SynReplyControlFrame flags streamID nvhBytes -> do
             nvh <- withMVar sessionMVar $ \ session -> do
