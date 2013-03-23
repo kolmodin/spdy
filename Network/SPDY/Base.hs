@@ -7,6 +7,7 @@ import           Control.Concurrent          (ThreadId, forkIO)
 import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
+import           Control.Monad               (when)
 import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
 import           Data.Bits                   ((.&.))
@@ -107,7 +108,7 @@ receiver sessionMVar inp cb = go
         case frame of
           DataFrame flags streamID payload -> do
             let flag_fin = testBit flags 0
-            modifyMVar_ sessionMVar $ \ session -> do
+            runCb <- modifyMVar sessionMVar $ \ session -> do
               let streams = sessionOutgoingStreams session
               let streamM = do
                     stream <- Map.lookup streamID streams
@@ -117,10 +118,10 @@ receiver sessionMVar inp cb = go
               case streamM of
                 Nothing -> -- Stream does not exist, or is already closed.
                            -- Ignore this package.
-                           return session
+                           return (session, False)
                 Just stream0 -> do
                   -- The stream does exist, and we do await more data frames.
-                  cb_recv_data_frame cb flags streamID payload
+
                   let this_closed = streamThisClosed stream0
                   let streams' | flag_fin && this_closed =
                                    -- Both sides closed the stream, remove it.
@@ -131,7 +132,9 @@ receiver sessionMVar inp cb = go
                                    -- Odd, will this even happen?
                                    Map.adjust (\stream -> stream { streamThatClosed = flag_fin }) streamID
                                | otherwise = id
-                  return session { sessionOutgoingStreams = streams' streams }
+                  return ( session { sessionOutgoingStreams = streams' streams }
+                         , True)
+            when runCb $ cb_recv_data_frame cb flags streamID payload
             go
           SynReplyControlFrame flags streamID nvhBytes -> do
             nvh <- withMVar sessionMVar $ \ session -> do
