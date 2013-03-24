@@ -1,22 +1,25 @@
 
 
-module Network.SPDY.Binary (streamFrame) where
+module Network.SPDY.Binary (streamInFrame, streamOutFrame) where
 
 -- haskell platform
 import           Control.Monad.IO.Class (liftIO)
 import           Data.Binary.Get
 import qualified Data.ByteString        as B
+import qualified Data.ByteString.Lazy   as L
 
 -- 3rd party
 import           Data.Binary.Bits.Get
-import           System.IO.Streams      (InputStream)
+import           Data.Binary.Bits.Put   (runBitPut)
+import           Data.Binary.Put        (runPut)
+import           System.IO.Streams      (InputStream, OutputStream, write)
 import qualified System.IO.Streams      as Streams
 
 -- this library
 import           Network.SPDY.Frame
 
-streamFrame :: InputStream B.ByteString -> IO (InputStream Frame)
-streamFrame inp = Streams.fromGenerator (go decoder)
+streamInFrame :: InputStream B.ByteString -> IO (InputStream Frame)
+streamInFrame inp = Streams.fromGenerator (go decoder)
   where
     decoder = runGetIncremental (runBitGet getFrame)
     go dec = do
@@ -28,6 +31,14 @@ streamFrame inp = Streams.fromGenerator (go decoder)
             Done bs' _ frame -> do
               Streams.yield frame
               go (pushChunk decoder bs')
-            Fail bs' pos errmsg ->
-              liftIO $ print "Failed decoding of frames"
+            Fail _bs' _pos errmsg ->
+              liftIO $ print $ "Failed decoding of frames" ++ errmsg
             k@(Partial _) -> go k
+
+streamOutFrame :: OutputStream L.ByteString -> IO (OutputStream Frame)
+streamOutFrame outp = Streams.makeOutputStream go
+  where
+    go Nothing = write Nothing outp
+    go (Just frame) = do
+      let lbs = runPut (runBitPut (putFrame frame))
+      write (Just lbs) outp

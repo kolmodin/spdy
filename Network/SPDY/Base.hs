@@ -8,7 +8,6 @@ import           Control.Concurrent.MVar
 import           Control.Concurrent.STM      (atomically, retry)
 import           Control.Concurrent.STM.TVar
 import           Control.Monad               (when)
-import           Data.Binary.Put             (runPut)
 import           Data.Bits                   (testBit)
 import           Data.Bits                   ((.&.))
 import qualified Data.ByteString             as B
@@ -21,7 +20,6 @@ import           Data.Word                   (Word32, Word8)
 
 -- 3rd party
 import qualified Codec.Zlib                  as Z
-import           Data.Binary.Bits.Put        (runBitPut)
 import           Data.HashMap.Strict         (HashMap)
 import qualified Data.HashMap.Strict         as Map
 import           System.IO.Streams           (InputStream, OutputStream)
@@ -87,7 +85,7 @@ defaultSessionState role queue receiverId senderId = do
     ping SpdyServer = 2
     ping SpdyClient = 1
 
-newClientFromCallbacks :: InputStream Frame -> OutputStream L.ByteString -> Callbacks -> IO SpdySession
+newClientFromCallbacks :: InputStream Frame -> OutputStream Frame -> Callbacks -> IO SpdySession
 newClientFromCallbacks inp out cb = do
   sessionMVar <- newEmptyMVar
   queue <- newTVarIO []
@@ -121,7 +119,6 @@ receiver sessionMVar inp cb = go
                            return (session, False)
                 Just stream0 -> do
                   -- The stream does exist, and we do await more data frames.
-
                   let this_closed = streamThisClosed stream0
                   let streams' | flag_fin && this_closed =
                                    -- Both sides closed the stream, remove it.
@@ -184,7 +181,7 @@ receiver sessionMVar inp cb = go
 myRole :: SpdySession -> IO SpdyRole
 myRole = fmap sessionRole . readMVar
 
-sender :: OutputStream L.ByteString -> Queue -> IO ()
+sender :: OutputStream Frame -> Queue -> IO ()
 sender out queue = go
   where
   go = do
@@ -198,7 +195,7 @@ sender out queue = go
         _ <- cb
         return frame
       OutgoingFrame frame -> return frame
-    Streams.write (Just (runPut (runBitPut (putFrame frame)))) out
+    Streams.write (Just frame) out
     go
   getNextFrame =
     atomically $ do

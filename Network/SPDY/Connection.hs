@@ -35,9 +35,10 @@ connect host port cb = do
   print prot
   (is, os) <- makeTLSStreams tlsctx
 
-  ifs <- streamFrame is
+  ifs <- streamInFrame is
+  ofs <- streamOutFrame os
 
-  session <- newClientFromCallbacks ifs os cb
+  session <- newClientFromCallbacks ifs ofs cb
 
   return (tlsctx, session)
 
