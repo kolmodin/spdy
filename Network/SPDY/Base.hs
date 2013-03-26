@@ -95,6 +95,16 @@ newClientFromCallbacks inp out cb = do
   putMVar sessionMVar session
   return sessionMVar
 
+newServerFromCallbacks :: InputStream Frame -> OutputStream Frame -> Callbacks -> IO SpdySession
+newServerFromCallbacks inp out cb = do
+  sessionMVar <- newEmptyMVar
+  queue <- newTVarIO []
+  receiverThreadId <- forkIO $ receiver sessionMVar inp cb
+  senderThreadId <- forkIO $ sender out queue
+  session <- defaultSessionState SpdyServer queue receiverThreadId senderThreadId
+  putMVar sessionMVar session
+  return sessionMVar
+
 receiver :: SpdySession -> InputStream Frame -> Callbacks -> IO ()
 receiver sessionMVar inp cb = go
   where
